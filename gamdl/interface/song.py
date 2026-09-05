@@ -3,7 +3,7 @@ import base64
 import datetime
 import json
 import re
-import struct
+import urllib.parse
 from typing import AsyncGenerator, Callable
 from xml.dom import minidom
 from xml.etree import ElementTree
@@ -49,6 +49,72 @@ class AppleMusicSongInterface:
         self.skip_stream_info = skip_stream_info
         self.ask_codec_function = ask_codec_function
 
+    async def _get_lyrics_from_catalog(
+        self, song_metadata: dict
+    ) -> "Lyrics | None":
+        """Fetch lyrics via the Apple Music catalog API (requires media-user-token).
+
+        This is the same logic used by the cookies-only path, extracted so that
+        the wrapper + cookies hybrid mode can also benefit from it.
+        Returns a ``Lyrics`` object on success, ``None`` otherwise.
+        """
+        if (
+            "relationships" not in song_metadata
+            or "lyrics" not in song_metadata["relationships"]
+        ):
+            song_metadata = (
+                await self.base.apple_music_api.get_song(
+                    self.base.parse_catalog_media_id(song_metadata)
+                )
+            )["data"][0]
+
+        if (
+            "lyrics" in song_metadata.get("relationships", {})
+            and "data" in song_metadata["relationships"]["lyrics"]
+            and len(song_metadata["relationships"]["lyrics"]["data"]) > 0
+            and "attributes"
+            in song_metadata["relationships"]["lyrics"]["data"][0]
+            and song_metadata["relationships"]["lyrics"]["data"][0][
+                "attributes"
+            ].get("ttml")
+            is not None
+        ):
+            return self._get_lyrics(
+                song_metadata["relationships"]["lyrics"]["data"][0]["attributes"][
+                    "ttml"
+                ]
+            )
+        return None
+
+    async def _get_lyrics_ttml_from_wrapper(self, song_id: str) -> str | None:
+        """Fetch TTML lyrics string from wrapper-lite /lyrics endpoint.
+
+        wrapper-lite exposes GET /lyrics?adamId=<id>[&syllable=1]
+        and returns {"code":0,"data":{"lyrics":"<ttml>"}}.
+        Falls back to non-syllable lyrics if syllable fetch fails.
+        """
+        import httpx
+
+        wrapper_base = self.base.wrapper_url.rstrip("/")
+        for syllable in (1, 0):
+            url = f"{wrapper_base}/lyrics?adamId={song_id}&syllable={syllable}"
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    data = response.json()
+            except Exception:
+                continue
+
+            if data.get("code") != 0:
+                continue
+
+            ttml = data.get("data", {}).get("lyrics") or ""
+            if ttml.strip():
+                return ttml
+
+        return None
+
     async def get_lyrics(
         self,
         song_metadata: dict,
@@ -62,6 +128,29 @@ class AppleMusicSongInterface:
             log.debug("no_lyrics")
             return None
 
+        has_cookie = bool(self.base.apple_music_api.media_user_token)
+
+        # --- wrapper-lite path ---
+        if self.base.use_wrapper:
+            if has_cookie:
+                # Cookies available → try catalog API first (richer TTML / syllable data)
+                catalog_lyrics = await self._get_lyrics_from_catalog(song_metadata)
+                if catalog_lyrics:
+                    log.debug("success_wrapper_catalog")
+                    return catalog_lyrics
+                log.debug("catalog_lyrics_empty_falling_back_to_wrapper_endpoint")
+
+            # No cookies (or catalog returned nothing) → wrapper /lyrics endpoint
+            song_id = self.base.parse_catalog_media_id(song_metadata)
+            ttml = await self._get_lyrics_ttml_from_wrapper(song_id)
+            if ttml:
+                lyrics = self._get_lyrics(ttml)
+                log.debug("success_wrapper", lyrics=lyrics)
+                return lyrics
+            log.debug("no_lyrics_data_wrapper")
+            return None
+
+        # --- cookies-only path (unchanged) ---
         if (
             "relationships" not in song_metadata
             or "lyrics" not in song_metadata["relationships"]
@@ -189,14 +278,44 @@ class AppleMusicSongInterface:
 
         return f"[{timestamp.strftime('%M:%S.%f')[:-4]}]{text}"
 
+    @staticmethod
+    def _build_xid_from_catalog(song_metadata: dict) -> str | None:
+        """Return the ISRC from catalog attributes as the xid atom value.
+
+        When cookies are unavailable the full ``Vendor:isrc:ISRC`` string that
+        webplayback normally supplies cannot be reconstructed reliably (the
+        vendor prefix is not exposed by the catalog API).  Storing the bare
+        ISRC is lossless — it preserves the internationally unique track
+        identifier without inventing a vendor prefix that could be wrong.
+        Returns ``None`` when no ISRC is present so the atom is omitted
+        entirely rather than written with a placeholder value.
+        """
+        return song_metadata.get("attributes", {}).get("isrc") or None
+
     async def get_tags(
         self,
         webplayback: dict,
         lyrics: str | None = None,
+        song_metadata: dict | None = None,
     ) -> MediaTags:
         log = logger.bind(action="get_song_tags")
 
         webplayback_metadata = webplayback["songList"][0]["assets"][0]["metadata"]
+
+        # --- composer_id (cmID atom) ---
+        # Webplayback from wrapper-lite may omit composerId.
+        # Fall back to the catalog API song_metadata when present.
+        composer_id_raw = webplayback_metadata.get("composerId")
+        if not composer_id_raw and song_metadata:
+            composer_id_raw = song_metadata.get("attributes", {}).get("composerId")
+        composer_id = int(composer_id_raw) if composer_id_raw else None
+
+        # --- xid atom (Vendor:isrc:ISRC) ---
+        # Webplayback from wrapper-lite never carries xid.
+        # Reconstruct it from the catalog ISRC + label heuristic.
+        xid = webplayback_metadata.get("xid")
+        if not xid and song_metadata:
+            xid = self._build_xid_from_catalog(song_metadata)
 
         tags = MediaTags(
             album=webplayback_metadata["playlistName"],
@@ -209,11 +328,7 @@ class AppleMusicSongInterface:
             comment=webplayback_metadata.get("comments"),
             compilation=webplayback_metadata["compilation"],
             composer=webplayback_metadata.get("composerName"),
-            composer_id=(
-                int(webplayback_metadata.get("composerId"))
-                if webplayback_metadata.get("composerId")
-                else None
-            ),
+            composer_id=composer_id,
             composer_sort=webplayback_metadata.get("sort-composer"),
             copyright=webplayback_metadata.get("copyright"),
             date=(
@@ -239,7 +354,7 @@ class AppleMusicSongInterface:
             title_sort=webplayback_metadata["sort-name"],
             track=webplayback_metadata["trackNumber"],
             track_total=webplayback_metadata["trackCount"],
-            xid=webplayback_metadata.get("xid"),
+            xid=xid,
         )
 
         log.debug("success", tags=tags)
@@ -258,23 +373,19 @@ class AppleMusicSongInterface:
                 return await self._get_stream_info(song_metadata, codec)
 
     async def get_wrapper_m3u8(self, adam_id: str) -> str | None:
-        host, port = self.base.wrapper_m3u8_ip.split(":")
-        reader, writer = await asyncio.open_connection(host, port)
-
-        data = struct.pack("B", len(adam_id)) + adam_id.encode()
-        writer.write(data)
-        await writer.drain()
-
-        response = await reader.readuntil(b"\n")
-        m3u8_url = response.decode().strip()
-
-        writer.close()
-        await writer.wait_closed()
-
-        if m3u8_url:
-            return m3u8_url
-
-        return None
+        """Fetch the M3U8 URL from wrapper-lite's HTTP /m3u8 endpoint."""
+        url = (
+            f"{self.base.wrapper_url.rstrip('/')}/m3u8"
+            f"?adamId={urllib.parse.quote(adam_id)}"
+        )
+        try:
+            response = await self.base.get_response(url)
+            data = response.json()
+        except Exception:
+            return None
+        if data.get("code") != 0:
+            return None
+        return data.get("data", {}).get("m3u8") or None
 
     async def _get_stream_info(
         self,
@@ -324,27 +435,37 @@ class AppleMusicSongInterface:
 
         session_key_metadata = self._get_audio_session_key_metadata(m3u8_master_data)
 
+        # Resolve DRM URIs from master-playlist session data when available.
+        # Falls back to fetching the segment-level M3U8 when:
+        #   • session_key_metadata is absent (legacy / AAC streams), OR
+        #   • asset_metadata does not contain the variant_id reported by the
+        #     playlist (can happen with wrapper-lite where the M3U8 is rebuilt
+        #     and stable-variant-id values may not match the asset map keys).
+        drm_resolved = False
         if session_key_metadata:
             asset_metadata = self._get_asset_metadata(m3u8_master_data)
-            variant_id = playlist["stream_info"]["stable_variant_id"]
-            drm_ids = asset_metadata[variant_id]["AUDIO-SESSION-KEY-IDS"]
+            variant_id = playlist["stream_info"].get("stable_variant_id", "")
+            variant_entry = (asset_metadata or {}).get(variant_id)
+            if variant_entry is not None:
+                drm_ids = variant_entry["AUDIO-SESSION-KEY-IDS"]
+                stream_info.widevine_pssh = self._get_drm_uri_from_session_key(
+                    session_key_metadata,
+                    drm_ids,
+                    "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed",
+                )
+                stream_info.playready_pssh = self._get_drm_uri_from_session_key(
+                    session_key_metadata,
+                    drm_ids,
+                    "com.microsoft.playready",
+                )
+                stream_info.fairplay_key = self._get_drm_uri_from_session_key(
+                    session_key_metadata,
+                    drm_ids,
+                    "com.apple.streamingkeydelivery",
+                )
+                drm_resolved = True
 
-            stream_info.widevine_pssh = self._get_drm_uri_from_session_key(
-                session_key_metadata,
-                drm_ids,
-                "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed",
-            )
-            stream_info.playready_pssh = self._get_drm_uri_from_session_key(
-                session_key_metadata,
-                drm_ids,
-                "com.microsoft.playready",
-            )
-            stream_info.fairplay_key = self._get_drm_uri_from_session_key(
-                session_key_metadata,
-                drm_ids,
-                "com.apple.streamingkeydelivery",
-            )
-        else:
+        if not drm_resolved:
             m3u8_obj = m3u8.loads(
                 (await self.base.get_response(stream_info.stream_url)).text
             )
@@ -506,6 +627,7 @@ class AppleMusicSongInterface:
         media.tags = await self.get_tags(
             webplayback,
             media.lyrics.unsynced if media.lyrics else None,
+            song_metadata=media.media_metadata,
         )
 
         if not self.skip_stream_info:

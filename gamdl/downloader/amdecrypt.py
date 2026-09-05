@@ -21,8 +21,9 @@ DEFAULT_SONG_DECRYPTION_KEY = b"2\xb8\xad\xe1v\x9e&\xb1\xff\xb8\x98cRy?\xc6"
 # Pre-fetch key used for first sample description
 PREFETCH_KEY = "skd://itunes.apple.com/P000000000/s1/e1"
 
-# Default wrapper address
-DEFAULT_WRAPPER_IP = "127.0.0.1:10020"
+# Legacy TCP wrapper address — no longer used by gamdl.
+# Decryption is now handled via wrapper-lite HTTP + Temari (amdecrypt_temari.py).
+DEFAULT_WRAPPER_IP = "127.0.0.1:10020"  # kept for any external callers
 
 
 @dataclass
@@ -1674,20 +1675,19 @@ async def decrypt_file(
     progress_callback=None,
 ) -> None:
     """
-    Main decryption function - decrypt an encrypted MP4 file via the wrapper.
+    [LEGACY] Decrypt an encrypted MP4 via the old TCP socket wrapper protocol.
 
-    This is the Python equivalent of the amdecrypt tool:
-    1. Extract samples from encrypted MP4
-    2. Send samples to wrapper for FairPlay decryption
-    3. Reassemble decrypted MP4 with clean metadata
+    This function is kept for backward compatibility only.
+    gamdl now uses decrypt_file_temari() (amdecrypt_temari.py) which calls
+    wrapper-lite's HTTP /key endpoint and decrypts in-process with Temari.
 
     Args:
-        wrapper_ip: Wrapper decrypt port address (e.g., "127.0.0.1:10020")
+        wrapper_ip: Legacy TCP wrapper address (e.g., "127.0.0.1:10020") — unused by gamdl
         track_id: Apple Music track ID
         fairplay_key: FairPlay key URI (skd://...)
         input_path: Path to encrypted MP4 file
         output_path: Path for decrypted output file
-        progress_callback: Optional callback(current, total, bytes, speed) for decryption progress
+        progress_callback: Optional callback(current, total, bytes, speed)
     """
     logger.debug(f"Decrypting {input_path} -> {output_path}")
 

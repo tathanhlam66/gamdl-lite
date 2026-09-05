@@ -47,9 +47,11 @@ class AppleMusicApi:
 
     @property
     def active_subscription(self) -> bool:
+        # In wrapper mode, account_info is None but subscription is guaranteed active
+        if getattr(self, "_wrapper_url", None):
+            return True
         if not self.account_info:
             return False
-
         return (
             self.account_info.get("meta", {})
             .get("subscription", {})
@@ -86,7 +88,7 @@ class AppleMusicApi:
                 )
 
         index_js_uri_match = re.search(
-            r"/(assets/index-legacy[~-][^/\"]+\.js)",
+            r"/(assets/index[~-][^/\"]+\.js)",
             home_page,
         )
         if not index_js_uri_match:
@@ -109,7 +111,7 @@ class AppleMusicApi:
                     status_code=response.status_code if response is not None else None,
                 )
 
-        token_match = re.search('(?=eyJh)(.*?)(?=")', index_js_page)
+        token_match = re.search(r'"(eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+)"', index_js_page)
         if not token_match:
             raise GamdlApiResponseError("Error finding token in index.js page")
         token = token_match.group(1)
@@ -242,29 +244,96 @@ class AppleMusicApi:
     @classmethod
     async def create_from_wrapper(
         cls,
-        wrapper_account_url: str = "http://127.0.0.1:30020/",
+        wrapper_url: str = "http://127.0.0.1:12340",
+        cookies_path: str | None = None,
         *args,
         **kwargs,
     ) -> "AppleMusicApi":
-        response = None
-        async with httpx.AsyncClient() as client:
+        """
+        Create an AppleMusicApi instance backed by wrapper-lite.
+
+        1. Calls GET /status to verify wrapper-lite is running and get storefront.
+        2. Fetches a public Apple Music dev token (no login required).
+        3. Webplayback and license calls are proxied via wrapper-lite's own credentials.
+        4. A dedicated plain httpx client (no Apple headers) is used for all wrapper calls.
+
+        Optional: ``cookies_path`` — path to a Netscape cookies.txt that contains
+        a valid ``media-user-token``.  When supplied, the token is attached to the
+        shared httpx client so that Apple Music catalog API calls (lyrics
+        relationship, composerId, ISRC …) return the full authenticated payload,
+        while all decryption traffic still goes through wrapper-lite.
+        """
+        wrapper_base = wrapper_url.rstrip("/")
+
+        # Dedicated plain HTTP client for wrapper-lite (no Apple auth headers)
+        wrapper_client = httpx.AsyncClient(timeout=30.0)
+
+        # 1. Verify wrapper-lite is reachable and get storefront
+        try:
+            response = await wrapper_client.get(f"{wrapper_base}/status")
+            response.raise_for_status()
+            status_data = response.json()
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            await wrapper_client.aclose()
+            raise GamdlApiResponseError(
+                f"Cannot connect to wrapper-lite at {wrapper_base} "
+                f"({type(exc).__name__}). "
+                "Make sure wrapper-lite is running before starting gamdl."
+            )
+        except httpx.HTTPStatusError as exc:
+            await wrapper_client.aclose()
+            raise GamdlApiResponseError(
+                f"wrapper-lite /status returned HTTP {exc.response.status_code}",
+                status_code=exc.response.status_code,
+            )
+
+        regions = status_data.get("data", {}).get("regions", [])
+        storefront = regions[0] if regions else kwargs.pop("storefront", "us")
+
+        # 2. Get a public dev token
+        token = kwargs.pop("token", None) or await cls.get_token()
+
+        # 3. Optionally extract media-user-token from cookies file
+        media_user_token: str | None = None
+        if cookies_path:
             try:
-                response = await client.get(wrapper_account_url)
-                response.raise_for_status()
-                wrapper_account_info = response.json()
-            except httpx.HTTPError:
-                raise GamdlApiResponseError(
-                    "Error fetching wrapper account info",
-                    status_code=response.status_code if response is not None else None,
+                cookies = MozillaCookieJar(cookies_path)
+                cookies.load(ignore_discard=True, ignore_expires=True)
+                media_user_token = next(
+                    (
+                        cookie.value
+                        for cookie in cookies
+                        if cookie.name == "media-user-token"
+                        and cookie.domain == APPLE_MUSIC_COOKIE_DOMAIN
+                    ),
+                    None,
+                )
+                if not media_user_token:
+                    log = logger.bind(action="create_from_wrapper")
+                    log.warning(
+                        "cookies_path provided but 'media-user-token' not found — "
+                        "falling back to wrapper-only lyrics"
+                    )
+            except Exception as exc:
+                log = logger.bind(action="create_from_wrapper")
+                log.warning(
+                    f"Failed to load cookies file ({exc}) — "
+                    "falling back to wrapper-only lyrics"
                 )
 
-        return await cls.create(
-            media_user_token=wrapper_account_info["music_token"],
-            token=wrapper_account_info["dev_token"],
+        # 4. Build API instance (with or without media_user_token)
+        api = await cls.create(
+            storefront=storefront,
+            token=token,
+            media_user_token=media_user_token,
             *args,
             **kwargs,
         )
 
+        # 5. Attach dedicated wrapper client and base URL
+        api._wrapper_url = wrapper_base
+        api._wrapper_client = wrapper_client
+        return api
     async def _amp_request(
         self,
         uri: str,
@@ -536,6 +605,42 @@ class AppleMusicApi:
     ) -> dict:
         log = logger.bind(action="get_webplayback", track_id=track_id)
 
+        # Proxy through wrapper-lite when available
+        if getattr(self, "_wrapper_url", None):
+            client = getattr(self, "_wrapper_client", httpx.AsyncClient(timeout=30.0))
+            try:
+                response = await client.get(
+                    f"{self._wrapper_url}/webplayback",
+                    params={"adamId": track_id},
+                )
+                response.raise_for_status()
+                data = response.json()
+            except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                raise GamdlApiResponseError(
+                    f"Cannot connect to wrapper-lite for webplayback: {exc}"
+                )
+            except httpx.HTTPStatusError as exc:
+                raise GamdlApiResponseError(
+                    "Error fetching webplayback from wrapper-lite",
+                    status_code=exc.response.status_code,
+                    content=exc.response.text,
+                )
+            if data.get("code") != 0:
+                raise GamdlApiResponseError(
+                    "Error fetching webplayback from wrapper-lite",
+                    content=data,
+                )
+            # wrapper-lite returns {"adamId":..., "webplayback": <full Apple JSON>}
+            webplayback = data["data"]["webplayback"]
+            if "dialog" in webplayback:
+                raise GamdlApiResponseError(
+                    "Error fetching webplayback from wrapper-lite",
+                    content=webplayback["dialog"],
+                )
+            log.debug("success (wrapper-lite)", webplayback=webplayback)
+            return webplayback
+
+        # Original Apple direct path
         response = None
         try:
             response = await self.client.post(
@@ -561,7 +666,6 @@ class AppleMusicApi:
             )
 
         log.debug("success", webplayback=webplayback)
-
         return webplayback
 
     async def get_license_exchange(
@@ -574,6 +678,40 @@ class AppleMusicApi:
     ) -> dict:
         log = logger.bind(action="get_license_exchange", track_id=track_id)
 
+        # Proxy through wrapper-lite when available
+        if getattr(self, "_wrapper_url", None):
+            client = getattr(self, "_wrapper_client", httpx.AsyncClient(timeout=30.0))
+            try:
+                response = await client.post(
+                    f"{self._wrapper_url}/license",
+                    json={
+                        "adamId": track_id,
+                        "challenge": challenge,
+                        "uri": track_uri,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+            except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                raise GamdlApiResponseError(
+                    f"Cannot connect to wrapper-lite for license: {exc}"
+                )
+            except httpx.HTTPStatusError as exc:
+                raise GamdlApiResponseError(
+                    "Error fetching license from wrapper-lite",
+                    status_code=exc.response.status_code,
+                    content=exc.response.text,
+                )
+            if data.get("code") != 0:
+                raise GamdlApiResponseError(
+                    "Error fetching license from wrapper-lite",
+                    content=data,
+                )
+            license_exchange = data["data"]
+            log.debug("success (wrapper-lite)", license_exchange=license_exchange)
+            return license_exchange
+
+        # Original Apple direct path
         response = None
         try:
             response = await self.client.post(
@@ -604,5 +742,4 @@ class AppleMusicApi:
             )
 
         log.debug("success", license_exchange=license_exchange)
-
         return license_exchange

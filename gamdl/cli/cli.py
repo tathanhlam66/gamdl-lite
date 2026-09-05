@@ -6,10 +6,10 @@ import click
 import colorama
 import structlog
 from dataclass_click import dataclass_click
-from httpx import ConnectError
 
 from .. import __version__
 from ..api import AppleMusicApi
+from ..api.exceptions import GamdlApiResponseError
 from ..downloader import (
     AppleMusicBaseDownloader,
     AppleMusicDownloader,
@@ -77,17 +77,29 @@ async def main(config: CliConfig):
     logger.info(f"Starting Gamdl {__version__}")
 
     if config.use_wrapper:
+        # cookies_path is optional when using wrapper — if the file exists it
+        # enriches catalog API responses (lyrics TTML, composerId, xid) without
+        # affecting the decryption path, which always goes through wrapper-lite.
+        import os
+        cookies_path_for_wrapper = (
+            config.cookies_path
+            if config.cookies_path and os.path.isfile(config.cookies_path)
+            else None
+        )
         try:
             apple_music_api = await AppleMusicApi.create_from_wrapper(
-                wrapper_account_url=config.wrapper_account_url,
+                wrapper_url=config.wrapper_url,
+                cookies_path=cookies_path_for_wrapper,
                 language=config.language,
             )
-        except ConnectError:
-            logger.critical(
-                "Could not connect to the wrapper account API. "
-                "Make sure the wrapper is running and the URL is correct."
-            )
+        except GamdlApiResponseError as exc:
+            logger.critical(str(exc))
             return
+        if apple_music_api.media_user_token:
+            logger.info(
+                "Wrapper mode with cookies: catalog API metadata (lyrics, composerId) "
+                "will use authenticated requests."
+            )
     else:
         cookies_path = prompt_path(config.cookies_path)
         apple_music_api = await AppleMusicApi.create_from_netscape_cookies(
@@ -134,7 +146,7 @@ async def main(config: CliConfig):
         cover_format=config.cover_format,
         cover_size=config.cover_size,
         use_wrapper=config.use_wrapper,
-        wrapper_m3u8_ip=config.wrapper_m3u8_ip,
+        wrapper_url=config.wrapper_url,
         wvd_path=config.wvd_path,
     )
 
@@ -176,7 +188,7 @@ async def main(config: CliConfig):
         mp4decrypt_path=config.mp4decrypt_path,
         ffmpeg_path=config.ffmpeg_path,
         mp4box_path=config.mp4box_path,
-        wrapper_decrypt_ip=config.wrapper_decrypt_ip,
+        wrapper_url=config.wrapper_url,
         download_mode=config.download_mode,
         album_folder_template=config.album_folder_template,
         compilation_folder_template=config.compilation_folder_template,
