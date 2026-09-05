@@ -1,5 +1,6 @@
 import asyncio
 from functools import wraps
+import os
 from pathlib import Path
 
 import click
@@ -80,7 +81,6 @@ async def main(config: CliConfig):
         # cookies_path is optional when using wrapper — if the file exists it
         # enriches catalog API responses (lyrics TTML, composerId, xid) without
         # affecting the decryption path, which always goes through wrapper-lite.
-        import os
         cookies_path_for_wrapper = (
             config.cookies_path
             if config.cookies_path and os.path.isfile(config.cookies_path)

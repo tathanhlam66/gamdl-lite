@@ -92,17 +92,18 @@ class AppleMusicSongInterface:
         wrapper-lite exposes GET /lyrics?adamId=<id>[&syllable=1]
         and returns {"code":0,"data":{"lyrics":"<ttml>"}}.
         Falls back to non-syllable lyrics if syllable fetch fails.
-        """
-        import httpx
 
+        Reuses the existing ``_wrapper_client`` from the API object so that
+        connection pooling is shared with all other wrapper calls.
+        """
+        client = self.base.apple_music_api._wrapper_client
         wrapper_base = self.base.wrapper_url.rstrip("/")
         for syllable in (1, 0):
             url = f"{wrapper_base}/lyrics?adamId={song_id}&syllable={syllable}"
             try:
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    response = await client.get(url)
-                    response.raise_for_status()
-                    data = response.json()
+                response = await client.get(url)
+                response.raise_for_status()
+                data = response.json()
             except Exception:
                 continue
 
