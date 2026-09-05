@@ -218,16 +218,17 @@ def extract_song(input_path: str) -> SongInfo:
             song_info.samples.extend(samples_from_pair)
             moof_box = None
 
-    # Post-process samples: if this is ALAC, ensure all samples have duration 4096.
-    # Apple Music fragments often report 1024 in trex/tfhd defaults, but 
-    # ALAC frames are actually 4096 samples long. This mismatch is the 
-    # root cause of the 1:16 duration reporting for 5-minute tracks.
+    # Post-process samples: if this is ALAC, ensure all samples have duration 4096
+    # EXCEPT the final sample, which may legitimately be a partial frame (e.g., exactly 1024).
     is_alac = song_info.moov_data and (b"alac" in song_info.moov_data or b"ALAC" in song_info.moov_data)
-    if is_alac:
-        logger.debug("ALAC detected: forcing all sample durations to 4096")
-        for sample in song_info.samples:
-            # Only override if it was 0 or the common incorrect default of 1024
-            if sample.duration in (0, 1024):
+    if is_alac and song_info.samples:
+        logger.debug("ALAC detected: forcing sample durations to 4096 except final sample")
+        for i, sample in enumerate(song_info.samples):
+            is_last_sample = (i == len(song_info.samples) - 1)
+
+            if sample.duration == 0:
+                sample.duration = 4096
+            elif sample.duration == 1024 and not is_last_sample:
                 sample.duration = 4096
 
     logger.debug(f"Extracted {len(song_info.samples)} samples from {input_path}")
@@ -1415,12 +1416,12 @@ def _extract_trex_defaults(moov_data: bytes, target_track_id: int = 0) -> dict:
                 defaults["default_sample_description_index"] = struct.unpack(
                     ">I", trex_data[16:20]
                 )[0]
-                
+
                 # Extract duration and protect against Apple's dummy values
                 parsed_duration = struct.unpack(">I", trex_data[20:24])[0]
-                
-                # Override if the provider wrote 0, or if they incorrectly wrote 1024 for an ALAC track
-                if parsed_duration == 0 or (is_alac and parsed_duration == 1024):
+
+                # Only protect the value 0, keep 1024 as is to handle separately later
+                if parsed_duration == 0:
                     defaults["default_sample_duration"] = fallback_duration
                 else:
                     defaults["default_sample_duration"] = parsed_duration
