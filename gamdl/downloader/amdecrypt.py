@@ -1022,23 +1022,16 @@ def _extract_stsd_content(data: bytes) -> Optional[bytes]:
 def _clean_stsd_content(stsd_content: bytes) -> bytes:
     """
     Clean stsd content by removing encryption metadata.
-
-    This replaces the mp4decrypt cleanup step. For encrypted files, the stsd
-    contains encrypted sample entries (enca, encv) with sinf boxes that describe
-    the encryption scheme. We need to:
-    1. Convert encrypted entries (enca -> original format from frma)
-    2. Remove sinf boxes entirely
+    FIXED: Only keep the first sample entry to prevent duplicate ALAC configs.
     """
     if len(stsd_content) < 8:
         return stsd_content
 
-    # stsd content: version(1) + flags(3) + entry_count(4) + entries...
     version_flags = stsd_content[:4]
     entry_count = struct.unpack(">I", stsd_content[4:8])[0]
 
-    # Parse and clean each sample entry
-    cleaned_entries = []
     offset = 8
+    first_cleaned_entry = b""
 
     for _ in range(entry_count):
         if offset + 8 > len(stsd_content):
@@ -1054,22 +1047,20 @@ def _clean_stsd_content(stsd_content: bytes) -> bytes:
 
         # Check if this is an encrypted entry
         if entry_type in (b"enca", b"encv", b"encs", b"encm"):
-            # Clean the encrypted entry
             cleaned_entry = _clean_encrypted_sample_entry(entry_data)
-            cleaned_entries.append(cleaned_entry)
         else:
-            # Keep as-is but still remove any sinf boxes that might be present
             cleaned_entry = _remove_sinf_from_entry(entry_data)
-            cleaned_entries.append(cleaned_entry)
 
-        offset += entry_size
+        # We only need the FIRST valid entry for a decrypted, non-fragmented file
+        first_cleaned_entry = cleaned_entry
+        break
 
-    # Rebuild stsd content
-    result = version_flags + struct.pack(">I", len(cleaned_entries))
-    for entry in cleaned_entries:
-        result += entry
+    # Rebuild stsd content with EXACTLY 1 entry
+    if first_cleaned_entry:
+        result = version_flags + struct.pack(">I", 1) + first_cleaned_entry
+        return result
 
-    return result
+    return stsd_content
 
 
 def _clean_encrypted_sample_entry(entry_data: bytes) -> bytes:
