@@ -1,3 +1,5 @@
+import asyncio
+import json
 from pathlib import Path
 
 from ..interface.enums import CoverFormat
@@ -6,6 +8,11 @@ from ..utils import async_subprocess
 from .base import AppleMusicBaseDownloader
 from .enums import RemuxFormatMusicVideo, RemuxMode
 from .types import DownloadItem
+
+# Subtitle codecs that ffprobe may report but ffmpeg cannot transcode to mov_text.
+# c608/c708 = CEA-608/708 closed captions embedded in H.264 SEI — not a real
+# standalone stream, so converting them always fails with "Invalid data found".
+_UNTRANSCODABLE_SUBTITLE_CODECS = {"eia_608", "eia_608_ccdt", "eia_708", "c608", "c708"}
 
 
 class AppleMusicMusicVideoDownloader:
@@ -18,6 +25,57 @@ class AppleMusicMusicVideoDownloader:
         self.base = base
         self.remux_mode = remux_mode
         self.remux_format = remux_format
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    async def _probe_has_convertible_subtitles(self, input_path: str) -> bool:
+        """
+        Return True  → video has a subtitle stream that ffmpeg CAN transcode to mov_text.
+        Return False → no subtitle stream, or only untranscodable CC tracks (c608/c708).
+        """
+        ffprobe_path = self.base.full_ffmpeg_path
+        if ffprobe_path:
+            # Prefer ffprobe sitting next to ffmpeg
+            candidate = str(Path(ffprobe_path).parent / "ffprobe")
+            import shutil
+            ffprobe_path = shutil.which(candidate) or shutil.which("ffprobe") or None
+
+        if not ffprobe_path:
+            # ffprobe not available: fall back to safe behaviour (skip mov_text)
+            return False
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                ffprobe_path,
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_streams",
+                "-select_streams", "s",   # subtitle streams only
+                input_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode != 0:
+                return False
+
+            info = json.loads(stdout.decode())
+            streams = info.get("streams", [])
+
+            if not streams:
+                return False   # no subtitle streams at all
+
+            for s in streams:
+                codec = s.get("codec_name", "").lower()
+                if codec not in _UNTRANSCODABLE_SUBTITLE_CODECS:
+                    return True  # at least one convertible subtitle track exists
+
+            return False  # only untranscodable CC tracks found
+
+        except Exception:
+            return False  # probe failed → safe default
+
+    # ── remux methods ─────────────────────────────────────────────────────────
 
     async def _remux_mp4box(
         self,
@@ -46,6 +104,20 @@ class AppleMusicMusicVideoDownloader:
         input_path_audio: str,
         output_path: str,
     ):
+        # Probe first: only pass -c:s mov_text when the video actually has a
+        # subtitle track that ffmpeg can transcode.  CEA-608/708 closed-caption
+        # tracks embedded in H.264 SEI cause "Invalid data found" and must be
+        # dropped with -sn instead.
+        has_convertible_subs = await self._probe_has_convertible_subtitles(
+            input_path_video
+        )
+
+        subtitle_args: list[str]
+        if has_convertible_subs:
+            subtitle_args = ["-c:s", "mov_text"]
+        else:
+            subtitle_args = ["-sn"]   # drop untranscodable / absent subtitle tracks
+
         await async_subprocess(
             self.base.full_ffmpeg_path,
             "-loglevel",
@@ -57,8 +129,7 @@ class AppleMusicMusicVideoDownloader:
             input_path_audio,
             "-c",
             "copy",
-            "-c:s",
-            "mov_text",
+            *subtitle_args,
             "-movflags",
             "+faststart",
             output_path,
@@ -133,9 +204,15 @@ class AppleMusicMusicVideoDownloader:
             "." + media.stream_info.file_format.value,
         )
 
+        final_extension = (
+            "." + self.remux_format.value
+            if self.remux_format is not None
+            else "." + media.stream_info.file_format.value
+        )
+
         download_item.final_path = self.base.get_final_path(
             media.tags,
-            "." + media.stream_info.file_format.value,
+            final_extension,
             media.playlist_tags,
         )
 
