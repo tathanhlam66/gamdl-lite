@@ -602,11 +602,12 @@ class AppleMusicApi:
     async def get_webplayback(
         self,
         track_id: str,
+        use_wrapper: bool = True,
     ) -> dict:
         log = logger.bind(action="get_webplayback", track_id=track_id)
 
-        # Proxy through wrapper-lite when available
-        if getattr(self, "_wrapper_url", None):
+        # Proxy through wrapper-lite when available AND requested
+        if use_wrapper and getattr(self, "_wrapper_url", None):
             client = getattr(self, "_wrapper_client", httpx.AsyncClient(timeout=30.0))
             try:
                 response = await client.get(
@@ -675,11 +676,12 @@ class AppleMusicApi:
         challenge: str,
         key_system: str = "com.widevine.alpha",
         is_library: bool = False,
+        use_wrapper: bool = True,
     ) -> dict:
         log = logger.bind(action="get_license_exchange", track_id=track_id)
 
-        # Proxy through wrapper-lite when available
-        if getattr(self, "_wrapper_url", None):
+        # Proxy through wrapper-lite when available AND requested
+        if use_wrapper and getattr(self, "_wrapper_url", None):
             client = getattr(self, "_wrapper_client", httpx.AsyncClient(timeout=30.0))
             try:
                 response = await client.post(

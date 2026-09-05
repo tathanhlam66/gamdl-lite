@@ -166,8 +166,11 @@ class AppleMusicMusicVideoInterface:
             )
 
         if not m3u8_master_url:
+            # Music videos require the Apple direct webplayback endpoint —
+            # wrapper-lite's /webplayback only returns audio stream info.
             webplayback_response = await self.base.apple_music_api.get_webplayback(
-                metadata["id"]
+                metadata["id"],
+                use_wrapper=False,
             )
             m3u8_master_url = self._get_m3u8_master_url_from_webplayback(
                 webplayback_response["songList"][0],
@@ -372,14 +375,19 @@ class AppleMusicMusicVideoInterface:
         self,
         stream_info: StreamInfoAv,
     ) -> DecryptionKeyAv:
+        # Music videos use Widevine DRM only — wrapper-lite does not support
+        # MV license exchange (it handles FairPlay audio only).  Always use
+        # the direct Apple license path regardless of use_wrapper setting.
         decryption_key_video, decryption_key_audio = await asyncio.gather(
             self.base.get_decryption_key(
                 stream_info.video_track.widevine_pssh,
                 stream_info.media_id,
+                use_wrapper=False,
             ),
             self.base.get_decryption_key(
                 stream_info.audio_track.widevine_pssh,
                 stream_info.media_id,
+                use_wrapper=False,
             ),
         )
 

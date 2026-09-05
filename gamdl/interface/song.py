@@ -642,24 +642,29 @@ class AppleMusicSongInterface:
                     codec=self.codec_priority,
                 )
 
-            if (
-                not self.base.use_wrapper
-                and not media.stream_info.audio_track.widevine_pssh
-            ) or (
-                self.base.use_wrapper and not media.stream_info.audio_track.fairplay_key
-            ):
-                raise GamdlInterfaceDecryptionNotAvailableError(media_id=media.media_id)
+            track = media.stream_info.audio_track
+            has_fairplay = bool(track.fairplay_key)
+            has_widevine = bool(track.widevine_pssh)
 
-            if (
-                media.stream_info.audio_track.widevine_pssh
-                and not self.base.use_wrapper
-            ) or media.stream_info.audio_track.legacy:
+            # Determine decryption path:
+            #   wrapper + fairplay  → FairPlay via wrapper /license   (ALAC/Atmos)
+            #   wrapper + widevine only → direct Apple license (cookies required)
+            #                            e.g. aac-legacy stream has no FairPlay key
+            #   no wrapper          → direct Apple license via Widevine (or legacy)
+            if self.base.use_wrapper and has_fairplay:
+                # Wrapper handles FairPlay decryption — skip Widevine entirely
+                pass
+            elif has_widevine or track.legacy:
+                # Direct Apple license exchange (bypass wrapper even when configured)
                 media.decryption_key = DecryptionKeyAv(
                     audio_track=await self.base.get_decryption_key(
-                        media.stream_info.audio_track.widevine_pssh,
+                        track.widevine_pssh,
                         media.media_id,
+                        use_wrapper=False,
                     )
                 )
+            else:
+                raise GamdlInterfaceDecryptionNotAvailableError(media_id=media.media_id)
 
         media.partial = False
 

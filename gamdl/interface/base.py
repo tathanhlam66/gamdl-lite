@@ -163,6 +163,7 @@ class AppleMusicBaseInterface:
         self,
         pssh: str,
         track_id: str,
+        use_wrapper: bool = True,
     ) -> DecryptionKey:
         log = logger.bind(action="get_decryption_key", track_id=track_id)
 
@@ -181,6 +182,7 @@ class AppleMusicBaseInterface:
                 track_id,
                 pssh,
                 challenge,
+                use_wrapper=use_wrapper,
             )
 
             await asyncio.to_thread(
