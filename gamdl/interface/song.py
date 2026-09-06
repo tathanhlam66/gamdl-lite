@@ -198,8 +198,13 @@ class AppleMusicSongInterface:
             unsynced_lyrics.append(stanza)
 
             for p in div.iter("{http://www.w3.org/ns/ttml}p"):
-                if p.text is not None:
-                    stanza.append(p.text)
+                # Collect text from both line-timed (<p>text</p>) and
+                # word-timed (<p><span>word</span>…</p>) TTML structures.
+                # p.text alone misses span children produced by wrapper-lite's
+                # syllable endpoint — itertext() covers both cases.
+                line_text = " ".join("".join(p.itertext()).split())
+                if line_text:
+                    stanza.append(line_text)
 
                 if p.attrib.get("begin"):
                     if self.synced_lyrics_format == SyncedLyricsFormat.LRC:
@@ -252,7 +257,7 @@ class AppleMusicSongInterface:
     def _get_lyrics_line_srt(self, index: int, element: ElementTree.Element) -> str:
         timestamp_begin_ttml = element.attrib.get("begin")
         timestamp_end_ttml = element.attrib.get("end")
-        text = element.text
+        text = " ".join("".join(element.itertext()).split())
 
         timestamp_begin = self._parse_ttml_timestamp(timestamp_begin_ttml)
         timestamp_end = self._parse_ttml_timestamp(timestamp_end_ttml)
@@ -266,7 +271,7 @@ class AppleMusicSongInterface:
 
     def _get_lyrics_line_lrc(self, element: ElementTree.Element) -> str:
         timestamp_ttml = element.attrib.get("begin")
-        text = element.text
+        text = " ".join("".join(element.itertext()).split())
 
         timestamp = self._parse_ttml_timestamp(timestamp_ttml)
         ms_new = timestamp.strftime("%f")[:-3]
