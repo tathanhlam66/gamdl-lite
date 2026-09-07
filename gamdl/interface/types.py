@@ -41,6 +41,7 @@ class MediaTags:
     title_sort: str = None
     track: int = None
     track_total: int = None
+    isrc: str = None
     xid: str = None
 
     def as_mp4_tags(self, date_format: str = None) -> dict:
@@ -96,13 +97,26 @@ class MediaTags:
             "sonm": self.title_sort,
             "trkn": track_mp4,
             "xid ": self.xid,
+            "----:com.apple.iTunes:ISRC": self.isrc,
         }
 
-        return {
-            k: ([v] if not isinstance(v, bool) else v)
-            for k, v in mp4_tags.items()
-            if v is not None
-        }
+        from mutagen.mp4 import MP4FreeForm, AtomDataType
+
+        result = {}
+        for k, v in mp4_tags.items():
+            if v is None:
+                continue
+            if k.startswith("----:"):
+                # Freeform atoms require MP4FreeForm(bytes) for mutagen
+                result[k] = [MP4FreeForm(
+                    v.encode("utf-8") if isinstance(v, str) else v,
+                    dataformat=AtomDataType.UTF8,
+                )]
+            elif isinstance(v, bool):
+                result[k] = v
+            else:
+                result[k] = [v]
+        return result
 
 
 @dataclass

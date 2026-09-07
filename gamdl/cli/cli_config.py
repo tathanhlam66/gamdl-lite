@@ -32,7 +32,6 @@ from ..interface import (
 from .utils import Csv
 
 api_from_cookies_sig = inspect.signature(AppleMusicApi.create_from_netscape_cookies)
-api_from_wrapper_sig = inspect.signature(AppleMusicApi.create_from_wrapper)
 api_create_sig = inspect.signature(AppleMusicApi.create)
 
 base_interface_create_sig = inspect.signature(AppleMusicBaseInterface.create)
@@ -161,14 +160,6 @@ class CliConfig:
             ),
         ),
     ]
-    wrapper_account_url: Annotated[
-        str,
-        option(
-            "--wrapper-account-url",
-            help="Wrapper account URL",
-            default=api_from_wrapper_sig.parameters["wrapper_account_url"].default,
-        ),
-    ]
     language: Annotated[
         str,
         option(
@@ -218,12 +209,12 @@ class CliConfig:
             is_flag=True,
         ),
     ]
-    wrapper_m3u8_ip: Annotated[
+    wrapper_url: Annotated[
         str,
         option(
-            "--wrapper-m3u8-ip",
-            help="Wrapper m3u8 IP address and port",
-            default=base_interface_create_sig.parameters["wrapper_m3u8_ip"].default,
+            "--wrapper-url",
+            help="wrapper-lite base URL (e.g. http://127.0.0.1:12340)",
+            default=base_interface_create_sig.parameters["wrapper_url"].default,
         ),
     ]
     # Song Interface Options
@@ -342,14 +333,6 @@ class CliConfig:
             "--mp4box-path",
             help="MP4Box executable path",
             default=base_downloader_sig.parameters["mp4box_path"].default,
-        ),
-    ]
-    wrapper_decrypt_ip: Annotated[
-        str,
-        option(
-            "--wrapper-decrypt-ip",
-            help="IP address and port for wrapper decryption",
-            default=base_downloader_sig.parameters["wrapper_decrypt_ip"].default,
         ),
     ]
     download_mode: Annotated[

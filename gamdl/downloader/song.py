@@ -4,7 +4,8 @@ import structlog
 
 from ..interface.enums import CoverFormat
 from ..interface.types import AppleMusicMedia, DecryptionKeyAv
-from .amdecrypt import decrypt_file, decrypt_file_hex
+from .amdecrypt import decrypt_file_hex
+from .amdecrypt_temari import decrypt_file_temari
 from .base import AppleMusicBaseDownloader
 from .types import DownloadItem
 
@@ -51,15 +52,16 @@ class AppleMusicSongDownloader:
 
         return download_item
 
-    async def _decrypt_amdecrypt(
+    async def _decrypt_temari(
         self,
         input_path: str,
         output_path: str,
         media_id: str,
         fairplay_key: str,
     ) -> None:
-        await decrypt_file(
-            self.base.wrapper_decrypt_ip,
+        """Decrypt via wrapper-lite HTTP /key + Temari (replaces old TCP socket path)."""
+        await decrypt_file_temari(
+            self.base.wrapper_url,
             media_id,
             fairplay_key,
             input_path,
@@ -97,7 +99,7 @@ class AppleMusicSongDownloader:
         )
 
         if self.base.interface.base.use_wrapper and not legacy:
-            await self._decrypt_amdecrypt(
+            await self._decrypt_temari(
                 encrypted_path,
                 staged_path,
                 media_id,
