@@ -1,13 +1,6 @@
-# Gamdl (Glomatico's Apple Music Downloader)
-
-[![PyPI version](https://img.shields.io/pypi/v/gamdl?color=blue)](https://pypi.org/project/gamdl/)
-[![Python versions](https://img.shields.io/pypi/pyversions/gamdl)](https://pypi.org/project/gamdl/)
-[![License](https://img.shields.io/github/license/glomatico/gamdl)](https://github.com/glomatico/gamdl/blob/main/LICENSE)
-[![Downloads](https://img.shields.io/pypi/dm/gamdl)](https://pypi.org/project/gamdl/)
+# Gamdl-lite (Glomatico's Apple Music Downloader - unofficial version)
 
 A command-line app for downloading Apple Music songs, music videos and post videos.
-
-**Join our Discord Server:** <https://discord.gg/aBjMEZ9tnq>
 
 ## ✨ Features
 
@@ -54,7 +47,7 @@ Add these tools to your system PATH or specify their paths via command-line argu
 1. **Install Gamdl via pip:**
 
    ```bash
-   pip install gamdl
+   pip install ./gamdl-lite
    ```
 
 2. **Set up the cookies file:**
@@ -136,13 +129,12 @@ The file is created automatically on first run. Command-line arguments override 
 | `--no-config-file`, `-n`        | Don't use a config file                                           | `false`                                        |
 | **Apple Music Options**         |                                                                   |                                                |
 | `--cookies-path`, `-c`          | Cookies file path                                                 | `./cookies.txt`                                |
-| `--wrapper-account-url`         | Wrapper account URL                                               | `http://127.0.0.1:30020`                       |
+| `--wrapper-url`                 | Wrapper-lite base URL                                             | `http://127.0.0.1:12340`                       |
 | `--language`, `-l`              | Metadata language                                                 | `en-US`                                        |
 | **Output Options**              |                                                                   |                                                |
 | `--cover-format`                | Cover format                                                      | `jpg`                                          |
 | `--cover-size`                  | Cover size in pixels                                              | `1200`                                         |
 | `--wvd-path`                    | .wvd file path                                                    | -                                              |
-| `--wrapper-m3u8-ip`             | Wrapper m3u8 IP address and port                                  | -                                              |
 | **Song Options**                |                                                                   |                                                |
 | `--synced-lyrics-format`        | Synced lyrics format                                              | `lrc`                                          |
 | `--song-codec-priority`         | Comma-separated codec priority                                    | `aac-legacy`                                   |
@@ -164,7 +156,6 @@ The file is created automatically on first run. Command-line arguments override 
 | `--ffmpeg-path`                 | FFmpeg executable path                                            | `ffmpeg`                                       |
 | `--mp4box-path`                 | MP4Box executable path                                            | `MP4Box`                                       |
 | `--use-wrapper`                 | Use wrapper for decrypting songs                                  | `false`                                        |
-| `--wrapper-decrypt-ip`          | Wrapper decryption server IP                                      | `127.0.0.1:10020`                              |
 | `--download-mode`               | Download mode                                                     | `ytdlp`                                        |
 | **Template Options**            |                                                                   |                                                |
 | `--album-folder-template`       | Album folder template                                             | `{album_artist}/{album}`                       |
@@ -295,101 +286,6 @@ Use the [wrapper](https://github.com/WorldObservationLog/wrapper) to download so
 1. **Start the wrapper server** - Run the wrapper server
 2. **Enable wrapper in Gamdl** - Use `--use-wrapper` flag or set `use_wrapper = true` in config
 3. **Run Gamdl** - Download as usual with the wrapper enabled
-
-## 🐍 Embedding
-
-Use Gamdl as a library in your Python projects:
-
-```python
-import asyncio
-
-from gamdl.api import AppleMusicApi
-from gamdl.downloader import (
-    AppleMusicBaseDownloader,
-    AppleMusicDownloader,
-    AppleMusicMusicVideoDownloader,
-    AppleMusicSongDownloader,
-    AppleMusicUploadedVideoDownloader,
-)
-from gamdl.interface import (
-    AppleMusicBaseInterface,
-    AppleMusicInterface,
-    AppleMusicMusicVideoInterface,
-    AppleMusicSongInterface,
-    AppleMusicUploadedVideoInterface,
-)
-
-
-async def main():
-    # Create AppleMusicApi instance from cookies
-    apple_music_api = await AppleMusicApi.create_from_netscape_cookies(
-        cookies_path="cookies.txt",
-    )
-
-    # Check subscription
-    if not apple_music_api.active_subscription:
-        print("No active Apple Music subscription")
-        return
-
-    # Create base interface
-    base_interface = await AppleMusicBaseInterface.create(
-        apple_music_api=apple_music_api,
-    )
-
-    # Create specialized interfaces
-    song_interface = AppleMusicSongInterface(
-        base=base_interface,
-    )
-    music_video_interface = AppleMusicMusicVideoInterface(
-        base=base_interface,
-    )
-    uploaded_video_interface = AppleMusicUploadedVideoInterface(
-        base=base_interface,
-    )
-
-    # Create main interface
-    interface = AppleMusicInterface(
-        song=song_interface,
-        music_video=music_video_interface,
-        uploaded_video=uploaded_video_interface,
-    )
-
-    # Create base downloader
-    base_downloader = AppleMusicBaseDownloader(
-        interface=interface,
-    )
-
-    # Create specialized downloaders
-    song_downloader = AppleMusicSongDownloader(base=base_downloader)
-    music_video_downloader = AppleMusicMusicVideoDownloader(
-        base=base_downloader,
-    )
-    uploaded_video_downloader = AppleMusicUploadedVideoDownloader(base=base_downloader)
-
-    # Create main downloader
-    downloader = AppleMusicDownloader(
-        song=song_downloader,
-        music_video=music_video_downloader,
-        uploaded_video=uploaded_video_downloader,
-    )
-
-    # Download from URL
-    url = "https://music.apple.com/us/album/never-gonna-give-you-up-2022-remaster/1624945511?i=1624945512"
-    
-    download_queue = []
-    async for media in downloader.get_download_item_from_url(url):
-        download_queue.append(media)
-
-    for download_item in download_queue:
-        try:
-            await downloader.download(download_item)
-        except Exception as e:
-            print(f"Error downloading: {e}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
 
 ## 📄 License
 
