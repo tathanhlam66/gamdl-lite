@@ -314,25 +314,6 @@ class AppleMusicBaseDownloader:
 
         mp4.save()
 
-    async def _apply_cover(
-        self,
-        mp4: MP4,
-        cover_bytes: bytes | None,
-    ) -> None:
-        if cover_bytes is None:
-            return
-
-        mp4["covr"] = [
-            MP4Cover(
-                data=cover_bytes,
-                imageformat=(
-                    MP4Cover.FORMAT_JPEG
-                    if self.interface.base.cover_format == CoverFormat.JPG
-                    else MP4Cover.FORMAT_PNG
-                ),
-            )
-        ]
-
     def get_playlist_file_path(
         self,
         tags: PlaylistTags,
