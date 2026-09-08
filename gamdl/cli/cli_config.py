@@ -270,6 +270,19 @@ class CliConfig:
             type=Csv(SongCodec),
         ),
     ]
+    alac_max_sample_rate: Annotated[
+        int | None,
+        option(
+            "--alac-max-sample-rate",
+            help=(
+                "Cap ALAC sample rate in Hz. "
+                "Picks the highest available variant at or below this value. "
+                "E.g. 44100 = CD lossless only, 96000 = up to 96 kHz. "
+                "Omit (default) to always pick the highest available variant."
+            ),
+            default=None,
+        ),
+    ]
     use_album_date: Annotated[
         bool,
         option(

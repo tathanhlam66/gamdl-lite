@@ -38,6 +38,7 @@ class AppleMusicSongInterface:
         base: AppleMusicBaseInterface,
         synced_lyrics_format: SyncedLyricsFormat = SyncedLyricsFormat.LRC,
         codec_priority: list[SongCodec] = [SongCodec.AAC_LEGACY],
+        alac_max_sample_rate: int | None = None,
         use_album_date: bool = False,
         skip_stream_info: bool = False,
         ask_codec_function: Callable[[list[dict]], dict | None] | None = None,
@@ -45,6 +46,7 @@ class AppleMusicSongInterface:
         self.base = base
         self.synced_lyrics_format = synced_lyrics_format
         self.codec_priority = codec_priority
+        self.alac_max_sample_rate = alac_max_sample_rate
         self.use_album_date = use_album_date
         self.skip_stream_info = skip_stream_info
         self.ask_codec_function = ask_codec_function
@@ -658,6 +660,24 @@ class AppleMusicSongInterface:
 
         if not matching_playlists:
             return None
+
+        # For ALAC, optionally cap the sample rate.
+        # Audio group names follow the pattern: audio-alac-stereo-{sample_rate}-{bit_depth}
+        # e.g. audio-alac-stereo-44100-16, audio-alac-stereo-192000-24
+        if codec == SongCodec.ALAC and self.alac_max_sample_rate is not None:
+            def _sample_rate(playlist: dict) -> int:
+                audio = playlist["stream_info"]["audio"]  # e.g. "audio-alac-stereo-96000-24"
+                try:
+                    return int(audio.split("-")[3])
+                except (IndexError, ValueError):
+                    return 0
+
+            capped = [p for p in matching_playlists if _sample_rate(p) <= self.alac_max_sample_rate]
+            if capped:
+                matching_playlists = capped
+            # If nothing is at or below the cap (e.g. track only has 48000
+            # but cap is 44100), fall through with all variants so the caller
+            # still gets the best available rather than failing silently.
 
         return max(
             matching_playlists,

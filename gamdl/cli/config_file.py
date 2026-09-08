@@ -8,7 +8,7 @@ from pathlib import Path
 import click
 import click.types as click_types
 
-from .cli_config import CliConfig
+from .cli_config import CliConfig, CoverSizeParamType
 from .constants import EXCLUDED_CONFIG_FILE_PARAMS
 from .utils import Csv
 
@@ -71,6 +71,10 @@ class ConfigFile:
             | click_types.IntParamType,
         ):
             return str(param.default)
+
+        if isinstance(param.type, CoverSizeParamType):
+            # None means "best" (native resolution); int is the pixel size
+            return "best" if param.default is None else str(param.default)
 
         raise NotImplementedError(
             f"Serialization for parameter '{param.name}' of type "
