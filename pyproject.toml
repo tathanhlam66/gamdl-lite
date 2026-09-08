@@ -28,6 +28,9 @@ Repository = "https://github.com/glomatico/gamdl"
 [project.scripts]
 gamdl = "gamdl.cli.cli:main"
 
+[tool.setuptools.package-data]
+"gamdl.cli" = ["config.ini"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",

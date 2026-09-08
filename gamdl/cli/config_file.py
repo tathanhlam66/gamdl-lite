@@ -1,6 +1,8 @@
 import configparser
+import shutil
 import typing
 from functools import wraps
+from importlib import resources
 from pathlib import Path
 
 import click
@@ -9,6 +11,9 @@ import click.types as click_types
 from .cli_config import CliConfig
 from .constants import EXCLUDED_CONFIG_FILE_PARAMS
 from .utils import Csv
+
+# Bundled template shipped inside the package (gamdl/cli/config.ini)
+_BUNDLED_CONFIG = resources.files("gamdl.cli").joinpath("config.ini")
 
 
 class ConfigFile:
@@ -25,11 +30,15 @@ class ConfigFile:
 
     def _read_config_file(self) -> None:
         self.config = configparser.ConfigParser(interpolation=None)
+        config_path = Path(self.config_path)
 
-        if Path(self.config_path).exists():
-            self.config.read(self.config_path, encoding="utf-8")
-        else:
-            Path(self.config_path).parent.mkdir(parents=True, exist_ok=True)
+        if not config_path.exists():
+            # First run — copy the bundled template to the user's config path
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            with resources.as_file(_BUNDLED_CONFIG) as src:
+                shutil.copy2(src, config_path)
+
+        self.config.read(self.config_path, encoding="utf-8")
 
         if not self.config.has_section(self.section_name):
             self.config.add_section(self.section_name)
