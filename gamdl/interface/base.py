@@ -262,6 +262,49 @@ class AppleMusicBaseInterface:
             f".{image_format.lower()}",
         )
 
+    async def get_cover_mv(
+        self,
+        metadata: dict,
+        width: int,
+        height: int,
+    ):
+        """Like get_cover but uses the MV's actual pixel dimensions.
+
+        Music videos have a 16:9 (or other non-square) aspect ratio, so
+        requesting cover_size×cover_size would distort or pad the thumbnail.
+        We use the real video width and height resolved from the HLS playlist.
+        """
+        log = logger.bind(
+            action="get_cover_mv",
+            media_id=self.parse_catalog_media_id(metadata),
+            width=width,
+            height=height,
+        )
+
+        template_url = self._get_cover_template_url(metadata)
+
+        if self.cover_format == CoverFormat.RAW:
+            cover_url = template_url
+        else:
+            # Replace {w}x{h}bb.jpg with actual_width×actual_height
+            cover_url = re.sub(
+                r"/\{w\}x\{h\}([a-z]{2})\.jpg",
+                f"/{width}x{height}bb.{self.cover_format.value}",
+                template_url,
+            )
+
+        cover_file_extension = await self._get_cover_file_extension(cover_url)
+
+        cover = Cover(
+            template_url=template_url,
+            url=cover_url,
+            file_extension=cover_file_extension,
+        )
+
+        log.debug("success", cover=cover)
+
+        return cover
+
     async def get_cover(
         self,
         metadata: dict,

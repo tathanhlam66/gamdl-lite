@@ -410,14 +410,15 @@ class AppleMusicMusicVideoInterface:
                 media.index,
             )
 
-        media.cover = await self.base.get_cover(media.media_metadata)
-
         itunes_page_metadata = await self.get_itunes_page_metadata(media.media_metadata)
         media.tags = await self.get_tags(
             media.media_metadata,
             itunes_page_metadata,
         )
 
+        # Resolve stream_info first so we know the actual video resolution,
+        # then build the cover URL to match that resolution instead of the
+        # user-configured cover_size (which is intended for square album art).
         media.stream_info = await self.get_stream_info(
             media.media_metadata,
             itunes_page_metadata,
@@ -435,6 +436,15 @@ class AppleMusicMusicVideoInterface:
             raise GamdlInterfaceDecryptionNotAvailableError(media.media_id)
 
         media.decryption_key = await self.get_decryption_key(media.stream_info)
+
+        # Build cover URL using actual video width × height so the embedded
+        # thumbnail matches the MV resolution (e.g. 1920×1080) rather than
+        # cover_size×cover_size (e.g. 1200×1200 which is wrong for 16:9 content).
+        media.cover = await self.base.get_cover_mv(
+            media.media_metadata,
+            width=media.stream_info.video_track.width,
+            height=media.stream_info.video_track.height,
+        )
 
         media.partial = False
 
