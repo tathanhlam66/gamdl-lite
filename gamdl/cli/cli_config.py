@@ -47,6 +47,36 @@ music_video_downloader_sig = inspect.signature(AppleMusicMusicVideoDownloader.__
 downloader_sig = inspect.signature(AppleMusicDownloader.__init__)
 
 
+class CoverSizeParamType(click.ParamType):
+    """Click parameter type for --cover-size.
+
+    Accepts either:
+    - A positive integer (pixel size, e.g. ``1200``)
+    - The literal string ``best`` (case-insensitive) → resolved as ``None``
+      internally, meaning "use the artwork's native resolution".
+    """
+
+    name = "cover_size"
+
+    def convert(self, value, param, ctx):
+        if isinstance(value, int) or value is None:
+            return value
+        if str(value).strip().lower() == "best":
+            return None
+        try:
+            n = int(value)
+            if n <= 0:
+                self.fail(f"{value!r} is not a positive integer", param, ctx)
+            return n
+        except (ValueError, TypeError):
+            self.fail(
+                f"{value!r} is not a valid cover size — "
+                "use a positive integer or 'best' for native resolution",
+                param,
+                ctx,
+            )
+
+
 @dataclass
 class CliConfig:
     # CLI specific options
@@ -180,11 +210,15 @@ class CliConfig:
         ),
     ]
     cover_size: Annotated[
-        int,
+        int | None,
         option(
             "--cover-size",
-            help="Cover size in pixels",
+            help=(
+                "Cover size in pixels (e.g. 1200), or 'best' to use the "
+                "artwork's native resolution as stored by Apple."
+            ),
             default=base_interface_create_sig.parameters["cover_size"].default,
+            type=CoverSizeParamType(),
         ),
     ]
     wvd_path: Annotated[

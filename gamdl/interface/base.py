@@ -28,7 +28,7 @@ class AppleMusicBaseInterface:
         apple_music_api: AppleMusicApi,
         itunes_api: ItunesApi,
         cover_format: CoverFormat,
-        cover_size: int,
+        cover_size: int | None,
         use_wrapper: bool,
         wrapper_url: str,
         cdm: Cdm,
@@ -124,7 +124,7 @@ class AppleMusicBaseInterface:
         cls,
         apple_music_api: AppleMusicApi,
         cover_format: CoverFormat = CoverFormat.JPG,
-        cover_size: int = 1200,
+        cover_size: int | None = 1200,
         use_wrapper: bool = False,
         wrapper_url: str = "http://127.0.0.1:12340",
         wvd_path: str | None = None,
@@ -305,6 +305,19 @@ class AppleMusicBaseInterface:
 
         return cover
 
+    @staticmethod
+    def _get_artwork_true_size(metadata: dict) -> tuple[int, int]:
+        """Return the max pixel dimensions stored in the AMP artwork object.
+
+        The AMP API always includes ``artwork.width`` and ``artwork.height``
+        (the native resolution of the source image on Apple's CDN).  We use
+        these when the user passes ``--cover-size true`` so the downloaded
+        cover is exactly as large as Apple stores it — no upscaling, no
+        cropping.
+        """
+        artwork = metadata["attributes"]["artwork"]
+        return int(artwork["width"]), int(artwork["height"])
+
     async def get_cover(
         self,
         metadata: dict,
@@ -317,6 +330,14 @@ class AppleMusicBaseInterface:
 
         if self.cover_format == CoverFormat.RAW:
             cover_url = template_url
+        elif self.cover_size is None:
+            # cover_size=None means "true" — use the artwork's native dimensions
+            w, h = self._get_artwork_true_size(metadata)
+            cover_url = re.sub(
+                r"/\{w\}x\{h\}([a-z]{2})\.jpg",
+                f"/{w}x{h}bb.{self.cover_format.value}",
+                template_url,
+            )
         else:
             cover_url = self.format_cover(
                 template_url,
