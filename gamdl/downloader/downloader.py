@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 from pathlib import Path
 from typing import AsyncGenerator
@@ -33,6 +34,7 @@ class AppleMusicDownloader:
         synced_lyrics_only: bool = False,
         skip_cleanup: bool = False,
         skip_processing: bool = False,
+        verify_integrity: bool = False,
     ):
         self.song = song
         self.music_video = music_video
@@ -44,6 +46,7 @@ class AppleMusicDownloader:
         self.synced_lyrics_only = synced_lyrics_only
         self.skip_cleanup = skip_cleanup
         self.skip_processing = skip_processing
+        self.verify_integrity = verify_integrity
 
         self.base = song.base
 
@@ -247,6 +250,35 @@ class AppleMusicDownloader:
 
         log.debug("success")
 
+    async def _verify_integrity(self, final_path: str) -> None:
+        """Run ffmpeg decode check on the output file.
+
+        ffmpeg -v error -i <file> -f null - prints nothing on a healthy file
+        and writes any decode warnings/errors to stderr.  We capture stderr and
+        log it as a warning so the user is informed without aborting the
+        download — the file is already at its final location and may be
+        perfectly usable (e.g. verbatim ALAC frames confuse some decoders).
+        """
+        if not self.base.full_ffmpeg_path:
+            logger.warning("verify_integrity: ffmpeg not found, skipping")
+            return
+
+        log = logger.bind(action="verify_integrity", path=final_path)
+        proc = await asyncio.create_subprocess_exec(
+            self.base.full_ffmpeg_path,
+            "-v", "error",
+            "-i", final_path,
+            "-f", "null", "-",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        errors = stderr.decode(errors="replace").strip()
+        if errors:
+            log.warning("integrity_check_warnings", ffmpeg_output=errors)
+        else:
+            log.info("integrity_check_passed")
+
     async def _final_processing(
         self,
         item: DownloadItem,
@@ -259,6 +291,9 @@ class AppleMusicDownloader:
                 item.staged_path,
                 item.final_path,
             )
+
+        if self.verify_integrity and Path(item.final_path).exists():
+            await self._verify_integrity(item.final_path)
 
     def _cleanup_temp(self, folder_tag: str) -> None:
         log = logger.bind(action="cleanup_temp", folder_tag=folder_tag)

@@ -543,3 +543,16 @@ class CliConfig:
             is_flag=True,
         ),
     ]
+    verify_integrity: Annotated[
+        bool,
+        option(
+            "--verify-integrity",
+            help=(
+                "Run ffmpeg decode check on each downloaded file after saving. "
+                "Prints a warning if ffmpeg reports any errors or warnings. "
+                "Does not abort the download — the file is kept regardless."
+            ),
+            default=downloader_sig.parameters["verify_integrity"].default,
+            is_flag=True,
+        ),
+    ]

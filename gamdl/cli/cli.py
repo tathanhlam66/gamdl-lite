@@ -210,6 +210,7 @@ async def main(config: CliConfig):
         save_playlist=config.save_playlist,
         no_synced_lyrics=config.no_synced_lyrics,
         synced_lyrics_only=config.synced_lyrics_only,
+        verify_integrity=config.verify_integrity,
     )
 
     if config.read_urls_as_txt:
