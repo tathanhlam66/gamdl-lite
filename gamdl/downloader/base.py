@@ -41,6 +41,7 @@ class AppleMusicBaseDownloader:
         exclude_tags: list[str] = None,
         truncate: int = None,
         silent: bool = False,
+        embed_synced_lyrics: bool = False,
     ):
         self.interface = interface
         self.output_path = output_path
@@ -63,6 +64,7 @@ class AppleMusicBaseDownloader:
         self.exclude_tags = exclude_tags
         self.truncate = truncate
         self.silent = silent
+        self.embed_synced_lyrics = embed_synced_lyrics
 
         self._initialize_binary_paths()
 
@@ -262,6 +264,7 @@ class AppleMusicBaseDownloader:
         media_path: str,
         tags: MediaTags,
         cover_bytes: bytes | None,
+        synced_lyrics: str | None = None,
     ):
         log = logger.bind(action="apply_tags", media_path=media_path)
 
@@ -284,6 +287,7 @@ class AppleMusicBaseDownloader:
             mp4_tags,
             cover_bytes,
             skip_tagging,
+            synced_lyrics,
         )
 
         log.debug("success")
@@ -294,6 +298,7 @@ class AppleMusicBaseDownloader:
         tags: dict,
         cover_bytes: bytes | None,
         skip_tagging: bool,
+        synced_lyrics: str | None = None,
     ):
         mp4 = MP4(media_path)
         mp4.clear()
@@ -311,6 +316,11 @@ class AppleMusicBaseDownloader:
                     )
                 ]
             mp4.update(tags)
+
+            if synced_lyrics:
+                # Replace ©lyr (unsynced) with synced lyrics so all players
+                # that read the standard lyrics tag get the timed version.
+                mp4["\xa9lyr"] = [synced_lyrics]
 
         mp4.save()
 

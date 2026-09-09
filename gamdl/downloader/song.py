@@ -180,4 +180,11 @@ class AppleMusicSongDownloader:
             download_item.staged_path,
             download_item.media.tags,
             cover_bytes,
+            synced_lyrics=(
+                download_item.media.lyrics.synced
+                if self.base.embed_synced_lyrics
+                and download_item.media.lyrics
+                and download_item.media.lyrics.synced
+                else None
+            ),
         )

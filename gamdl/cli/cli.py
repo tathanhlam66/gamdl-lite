@@ -187,6 +187,7 @@ async def main(config: CliConfig):
         date_tag_template=config.date_tag_template,
         exclude_tags=config.exclude_tags,
         truncate=config.truncate,
+        embed_synced_lyrics=config.embed_synced_lyrics,
     )
 
     song_downloader = AppleMusicSongDownloader(

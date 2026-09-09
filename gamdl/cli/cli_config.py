@@ -556,3 +556,17 @@ class CliConfig:
             is_flag=True,
         ),
     ]
+    embed_synced_lyrics: Annotated[
+        bool,
+        option(
+            "--embed-synced-lyrics",
+            help=(
+                "Embed synced lyrics into the m4a file as a freeform atom "
+                "(----:com.apple.iTunes:SYNCEDLYRICS) in addition to saving "
+                "the .lrc/.srt/.ttml sidecar file. "
+                "Recognised by foobar2000, MusicBee, Dopamine, and others."
+            ),
+            default=base_downloader_sig.parameters["embed_synced_lyrics"].default,
+            is_flag=True,
+        ),
+    ]
