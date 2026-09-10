@@ -293,7 +293,13 @@ class AppleMusicDownloader:
             )
 
         if self.verify_integrity and Path(item.final_path).exists():
-            await self._verify_integrity(item.final_path)
+            if Path(item.final_path).suffix.lower() in (".mp4", ".m4v"):
+                logger.debug(
+                    "verify_integrity: skipping music video file",
+                    path=item.final_path,
+                )
+            else:
+                await self._verify_integrity(item.final_path)
 
     def _cleanup_temp(self, folder_tag: str) -> None:
         log = logger.bind(action="cleanup_temp", folder_tag=folder_tag)
