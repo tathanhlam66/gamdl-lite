@@ -286,16 +286,24 @@ class AppleMusicApi:
         # 2. Get a public dev token
         token = kwargs.pop("token", None) or await cls.get_token()
 
-        # 3. Build API instance without media_user_token
-        api = await cls.create(
-            storefront=storefront,
-            token=token,
-            media_user_token=None,
-            *args,
-            **kwargs,
-        )
+        # 3. Build API instance without media_user_token.
+        # Guard with try/finally so wrapper_client is always closed if
+        # cls.create() (or anything after it) raises before we can hand
+        # ownership of the client to the api object.
+        try:
+            api = await cls.create(
+                storefront=storefront,
+                token=token,
+                media_user_token=None,
+                *args,
+                **kwargs,
+            )
+        except Exception:
+            await wrapper_client.aclose()
+            raise
 
-        # 4. Attach dedicated wrapper client and base URL
+        # 4. Attach dedicated wrapper client and base URL.
+        # Ownership of wrapper_client is now transferred to the api object.
         api._wrapper_url = wrapper_base
         api._wrapper_client = wrapper_client
         return api

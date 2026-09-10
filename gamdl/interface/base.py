@@ -82,7 +82,10 @@ class AppleMusicBaseInterface:
 
         decoded_pssh = base64.b64decode(pssh)
         if len(decoded_pssh) > 30:
-            return pssh
+            # Already a full PSSH box — return the decoded bytes, not the
+            # base64 string (the previous code accidentally returned `pssh`,
+            # a str, which would crash PSSH() downstream).
+            return decoded_pssh
 
         widevine_pssh_data = WidevinePsshData(
             algorithm=1,

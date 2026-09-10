@@ -31,6 +31,7 @@ Add these tools to your system PATH or specify their paths via command-line argu
 | **Music Videos** | `music_video_remux_mode: ffmpeg` | FFmpeg<br/>mp4decrypt |
 | | `music_video_remux_mode: mp4box` | MP4Box<br/>mp4decrypt |
 | **Faster Downloads** | `download_mode: nm3u8dlre` | N_m3u8DL-RE |
+| **Integrity Check** | `verify_integrity: true` | FFmpeg |
 
 #### Tool Reference
 
@@ -138,9 +139,11 @@ The file is created automatically on first run. Command-line arguments override 
 | **Song Options**                |                                                                   |                                                |
 | `--synced-lyrics-format`        | Synced lyrics format                                              | `lrc`                                          |
 | `--song-codec-priority`         | Comma-separated codec priority                                    | `aac-legacy`                                   |
+| `--alac-max-sample-rate`        | Cap ALAC sample rate in Hz (e.g. `44100`, `48000`, `96000`)       | -                                              |
 | `--use-album-date`              | Use album release date for songs                                  | `false`                                        |
 | `--no-synced-lyrics`            | Don't download synced lyrics                                      | `false`                                        |
 | `--synced-lyrics-only`          | Download only synced lyrics                                       | `false`                                        |
+| `--embed-synced-lyrics`         | Embed synced lyrics into the file, replacing the unsynced         | `false`                                        |
 | **Music Video Options**         |                                                                   |                                                |
 | `--music-video-resolution`      | Max music video resolution                                        | `1080p`                                        |
 | `--music-video-codec-priority`  | Comma-separated codec priority                                    | `h264,h265`                                    |
@@ -173,7 +176,7 @@ The file is created automatically on first run. Command-line arguments override 
 | `--overwrite`                   | Overwrite existing files                                          | `false`                                        |
 | `--save-cover`, `-s`            | Save cover as separate file                                       | `false`                                        |
 | `--save-playlist`               | Save M3U8 playlist file                                           | `false`                                        |
-
+| `--verify-integrity`            | Run ffmpeg decode check after download and warn on errors         | `false`                                        |
 
 ### Template Variables
 
@@ -192,7 +195,7 @@ The file is created automatically on first run. Command-line arguments override 
 **Tags for exclude-tags only:**
 
 - `album_sort`, `artist_sort`, `composer_sort`, `title_sort`
-- `comment`, `compilation`, `copyright`, `cover`, `gapless`, `genre`, `genre_id`, `lyrics`, `rating`, `storefront`, `xid`
+- `comment`, `compilation`, `copyright`, `cover`, `gapless`, `genre`, `genre_id`, `isrc`, `lyrics`, `rating`, `storefront`, `xid`
 - `all` (special: skip all tagging)
 
 ### Logging Level
@@ -217,6 +220,11 @@ The file is created automatically on first run. Command-line arguments override 
 - `png`
 - `raw` - Raw format as provided by the artist (requires `save_cover` to be enabled as it doesn't embed covers into files)
 
+### Cover Size
+
+- Any positive integer (pixels) — e.g. `1200`, `2000`
+- `best` — use the artwork's native resolution as stored by Apple (e.g. `3000` for most albums, `1920×1080` for music videos)
+
 ### Metadata Language
 
 Use ISO 639-1 language codes (e.g., `en-US`, `es-ES`, `ja-JP`, `pt-BR`). Don't always work for music videos.
@@ -238,8 +246,11 @@ Use ISO 639-1 language codes (e.g., `en-US`, `es-ES`, `ja-JP`, `pt-BR`). Don't a
 - `aac-he-downmix` - AAC-HE 64kbps downmix
 - `atmos` - Dolby Atmos 768kbps
 - `ac3` - AC3 640kbps
-- `alac` - ALAC up to 24-bit/192kHz (unsupported)
+- `alac` - ALAC lossless up to 24-bit/192kHz (requires wrapper)
 - `ask` - Interactive experimental codec selection
+
+> [!TIP]
+> When using `alac`, use `--alac-max-sample-rate` to cap the sample rate. For example, `--alac-max-sample-rate 44100` selects CD lossless (44.1kHz/16-bit) only. If no variant at or below the cap exists, the lowest available variant is used as fallback — the download never fails.
 
 ### Synced Lyrics Format
 
