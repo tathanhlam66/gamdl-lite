@@ -195,6 +195,7 @@ class AppleMusicMusicVideoInterface:
             file_format = MediaFileFormat.M4V
 
         stream_info = StreamInfoAv(
+            media_id=self.base.parse_catalog_media_id(metadata),
             video_track=stream_info_video,
             audio_track=stream_info_audio,
             file_format=file_format,
