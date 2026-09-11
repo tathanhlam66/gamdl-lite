@@ -87,13 +87,11 @@ def custom_structlog_formatter(
 
     if level in {"INFO", "WARNING", "ERROR", "CRITICAL"}:
         message = event_dict.pop("event", "")
-        # Append any remaining key=value fields (e.g. ffmpeg_output, path)
         extras = {k: v for k, v in event_dict.items()
                   if k not in ("_record", "_from_structlog")}
         for k, v in extras.items():
             v_str = str(v)
             if "\n" in v_str:
-                # Multiline values (e.g. ffmpeg_output): indent each line
                 indented = "\n".join(f"    {line}" for line in v_str.splitlines())
                 message += f"\n  {k}:\n{indented}"
             else:

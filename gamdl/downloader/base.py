@@ -318,8 +318,6 @@ class AppleMusicBaseDownloader:
             mp4.update(tags)
 
             if synced_lyrics:
-                # Replace ©lyr (unsynced) with synced lyrics so all players
-                # that read the standard lyrics tag get the timed version.
                 mp4["\xa9lyr"] = [synced_lyrics]
 
         mp4.save()

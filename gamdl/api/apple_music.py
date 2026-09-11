@@ -258,10 +258,8 @@ class AppleMusicApi:
         """
         wrapper_base = wrapper_url.rstrip("/")
 
-        # Dedicated plain HTTP client for wrapper-lite (no Apple auth headers)
         wrapper_client = httpx.AsyncClient(timeout=30.0)
 
-        # 1. Verify wrapper-lite is reachable and get storefront
         try:
             response = await wrapper_client.get(f"{wrapper_base}/status")
             response.raise_for_status()
@@ -283,13 +281,9 @@ class AppleMusicApi:
         regions = status_data.get("data", {}).get("regions", [])
         storefront = regions[0] if regions else kwargs.pop("storefront", "us")
 
-        # 2. Get a public dev token
         token = kwargs.pop("token", None) or await cls.get_token()
 
-        # 3. Build API instance without media_user_token.
-        # Guard with try/finally so wrapper_client is always closed if
-        # cls.create() (or anything after it) raises before we can hand
-        # ownership of the client to the api object.
+        # Guard with try/finally so wrapper_client is always closed on error.
         try:
             api = await cls.create(
                 storefront=storefront,
@@ -302,8 +296,6 @@ class AppleMusicApi:
             await wrapper_client.aclose()
             raise
 
-        # 4. Attach dedicated wrapper client and base URL.
-        # Ownership of wrapper_client is now transferred to the api object.
         api._wrapper_url = wrapper_base
         api._wrapper_client = wrapper_client
         return api
@@ -578,7 +570,6 @@ class AppleMusicApi:
     ) -> dict:
         log = logger.bind(action="get_webplayback", track_id=track_id)
 
-        # Original Apple direct path
         response = None
         try:
             response = await self.client.post(
@@ -649,7 +640,7 @@ class AppleMusicApi:
             log.debug("success (wrapper-lite)", license_exchange=license_exchange)
             return license_exchange
 
-        # Original Apple direct path
+        # Direct Apple license path (no wrapper)
         response = None
         try:
             response = await self.client.post(

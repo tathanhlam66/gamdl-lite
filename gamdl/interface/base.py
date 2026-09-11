@@ -82,9 +82,7 @@ class AppleMusicBaseInterface:
 
         decoded_pssh = base64.b64decode(pssh)
         if len(decoded_pssh) > 30:
-            # Already a full PSSH box — return the decoded bytes, not the
-            # base64 string (the previous code accidentally returned `pssh`,
-            # a str, which would crash PSSH() downstream).
+            # Already a full PSSH box — return bytes directly.
             return decoded_pssh
 
         widevine_pssh_data = WidevinePsshData(
@@ -289,7 +287,6 @@ class AppleMusicBaseInterface:
         if self.cover_format == CoverFormat.RAW:
             cover_url = template_url
         else:
-            # Replace {w}x{h}bb.jpg with actual_width×actual_height
             cover_url = re.sub(
                 r"/\{w\}x\{h\}([a-z]{2})\.jpg",
                 f"/{width}x{height}bb.{self.cover_format.value}",
@@ -334,7 +331,7 @@ class AppleMusicBaseInterface:
         if self.cover_format == CoverFormat.RAW:
             cover_url = template_url
         elif self.cover_size is None:
-            # cover_size=None means "true" — use the artwork's native dimensions
+            # cover_size=None: use the artwork's native dimensions
             w, h = self._get_artwork_true_size(metadata)
             cover_url = re.sub(
                 r"/\{w\}x\{h\}([a-z]{2})\.jpg",

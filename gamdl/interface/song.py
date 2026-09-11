@@ -64,9 +64,7 @@ class AppleMusicSongInterface:
             log.debug("no_lyrics")
             return None
 
-        # In wrapper mode, use wrapper-lite /lyrics endpoint directly.
-        # It can return word-timed syllable lyrics with translations/romanization
-        # that the AMP relationships API may not expose.
+        # Wrapper-lite may return richer syllable lyrics not available via AMP.
         if self.base.use_wrapper:
             wrapper_lyrics = await self._get_lyrics_from_wrapper(
                 self.base.parse_catalog_media_id(song_metadata)
@@ -116,11 +114,7 @@ class AppleMusicSongInterface:
         (syllable=0).  Falls back to None on any error so the caller can try
         the AMP relationships path.
         """
-        # Request word-timed syllable lyrics (syllable=1) for TTML/SRT formats.
-        # For LRC we still request syllable=1; wrapper-lite bundles translations
-        # and romanization in both modes, and our _get_lyrics() TTML parser handles
-        # both.  syllable=0 only matters if the caller specifically wants
-        # wrapper-converted line-timed output without the extra metadata.
+        # Always request syllable=1; our TTML parser handles both line-timed and syllable-timed.
         syllable_param = "1"
         url = (
             f"{self.base.wrapper_url.rstrip('/')}/lyrics"
@@ -161,12 +155,10 @@ class AppleMusicSongInterface:
         if spans:
             parts = [s.text or "" for s in spans if (s.text or "").strip()]
             if parts:
-                # Join with space; remove space inserted before punctuation
                 joined = " ".join(parts)
                 joined = re.sub(r" ([,\.!?;:\)\]…\'\"」』])", r"\1", joined)
                 joined = re.sub(r"([\(\[「『\'\"]) ", r"\1", joined)
                 return joined.strip() or None
-        # Line-timed mode: text sits directly in p.text
         text = (p.text or "").strip()
         return text if text else None
 
@@ -347,7 +339,6 @@ class AppleMusicSongInterface:
         attr = song_metadata["attributes"]
         song_id = song_metadata["id"]
 
-        # ── AMP album relationship ─────────────────────────────────────────────
         album_data = None
         try:
             album_data = song_metadata["relationships"]["albums"]["data"][0]
@@ -356,9 +347,7 @@ class AppleMusicSongInterface:
         album_attr = album_data["attributes"] if album_data else {}
         album_id_str = album_data["id"] if album_data else None
 
-        # ── iTunes Lookup (concurrent with anything above) ────────────────────
-        # entity=album returns [song_record, album_record] giving us
-        # artistId, genreId, compilation, gapless, comments, discCount, etc.
+        # entity=album returns [song_record, album_record] with artistId, genreId, etc.
         lookup_results = []
         try:
             lookup_data = await self.base.itunes_api.get_lookup_result(
@@ -377,37 +366,30 @@ class AppleMusicSongInterface:
             except (TypeError, ValueError):
                 return default
 
-        # ── Integer IDs ───────────────────────────────────────────────────────
         title_id  = _int(song_id)
         album_id  = _int(lk_song.get("collectionId") or lk_album.get("collectionId") or album_id_str)
         artist_id = _int(lk_song.get("artistId")) or None
 
-        # genre_id: use None (omit tag) rather than 0 when unavailable.
-        # Hardcoding 0 writes an invalid geID atom that confuses players.
+        # Use None (not 0) for missing genre_id; 0 writes an invalid geID atom.
         _raw_genre_id = lk_song.get("primaryGenreId") or lk_album.get("primaryGenreId")
         genre_id = _int(_raw_genre_id) if _raw_genre_id else None
 
-        # ── Sort fields (AMP attributes, populated when track is in catalog) ──
         sort_name   = attr.get("sortName")        or attr.get("name", "")
         sort_artist = attr.get("sortArtistName")  or attr.get("artistName", "")
         sort_album  = album_attr.get("sortName")  or album_attr.get("name", "")
         sort_composer = attr.get("sortComposerName")
 
-        # ── Album name / artist name ──────────────────────────────────────────
-        # iTunes Lookup censoredName matches what webplayback returns
         album_name   = (lk_song.get("collectionCensoredName")
                         or album_attr.get("name", ""))
         album_artist = (lk_album.get("artistName")
                         or album_attr.get("artistName")
                         or attr.get("artistName", ""))
 
-        # ── Disc / track counts ───────────────────────────────────────────────
         disc       = _int(lk_song.get("discNumber")  or attr.get("discNumber"), 1)
         disc_total = _int(lk_song.get("discCount")   or album_attr.get("discCount"), 1)
         track      = _int(lk_song.get("trackNumber") or attr.get("trackNumber"), 1)
         track_total = _int(lk_song.get("trackCount") or album_attr.get("trackCount"), 1)
 
-        # ── Explicit rating ───────────────────────────────────────────────────
         # iTunes Lookup: trackExplicitness = "explicit" | "cleaned" | "notExplicit"
         explicitness = lk_song.get("trackExplicitness", "")
         if explicitness == "explicit":
@@ -424,13 +406,11 @@ class AppleMusicSongInterface:
             else:
                 rating = MediaRating.NONE
 
-        # ── Genre ─────────────────────────────────────────────────────────────
         genre = (lk_song.get("primaryGenreName")
                  or (attr.get("genreNames") or [""])[0]
                  or None)
 
-        # ── Gapless, compilation, comments ───────────────────────────────────
-        # These live in iTunes Lookup but not in AMP catalog attributes
+        # gapless/compilation/comments are only in iTunes Lookup, not AMP attributes
         gapless     = bool(lk_song.get("trackTimeMillis") and lk_song.get("trackTimeMillis") != 0
                            and lk_album.get("collectionType") == "Compilation")                       if not lk_song.get("gapless") else bool(lk_song.get("gapless"))
         compilation = bool(lk_song.get("collectionArtistId")
@@ -438,11 +418,9 @@ class AppleMusicSongInterface:
                            or lk_album.get("collectionType") == "Compilation")
         comment     = lk_song.get("shortDescription") or lk_song.get("longDescription")
 
-        # ── Copyright ─────────────────────────────────────────────────────────
         copyright_str = (album_attr.get("copyright")
                          or lk_album.get("copyright"))
 
-        # ── Date ─────────────────────────────────────────────────────────────
         if self.use_album_date and album_id:
             date = await self.base.get_media_date(str(album_id))
         else:
@@ -450,16 +428,10 @@ class AppleMusicSongInterface:
                                 or attr.get("releaseDate"))
             date = self.base.parse_date(release_date_str) if release_date_str else None
 
-        # ── Composer ─────────────────────────────────────────────────────────
         composer    = attr.get("composerName") or lk_song.get("composerName")
         composer_id = None  # not in AMP or iTunes Lookup for songs
 
-        # ── xid / isrc ────────────────────────────────────────────────────────
-        # xid is only returned by the webplayback API (vendor-specific ID
-        # embedded in the FairPlay license flow) and is never present in AMP
-        # catalog attributes — omit it entirely to avoid writing an empty tag.
-        # ISRC is available in AMP attributes (attr["isrc"]) and is a stable,
-        # standard identifier; include it when present.
+        # xid is webplayback-only; ISRC is stable standard ID from AMP attributes.
         isrc = attr.get("isrc") or None
 
         tags = MediaTags(
@@ -486,7 +458,7 @@ class AppleMusicSongInterface:
             lyrics=lyrics if lyrics else None,
             media_type=MediaType.SONG,
             rating=rating,
-            storefront=self.base.itunes_api.storefront_id,  # numeric int
+            storefront=self.base.itunes_api.storefront_id,
             title=lk_song.get("trackCensoredName") or attr.get("name", ""),
             title_id=title_id,
             title_sort=sort_name,
@@ -504,8 +476,7 @@ class AppleMusicSongInterface:
         webplayback: dict | None = None,
     ) -> StreamInfoAv | None:
         for codec in self.codec_priority:
-            # In wrapper mode webplayback is None; legacy codecs need the
-            # webplayback struct, so fall back to the HLS path instead.
+            # Legacy codecs need webplayback; in wrapper mode fall back to HLS path.
             if codec.is_legacy() and webplayback is not None:
                 return await self._get_stream_info_legacy(webplayback, codec)
             else:
@@ -574,10 +545,7 @@ class AppleMusicSongInterface:
 
         session_key_metadata = self._get_audio_session_key_metadata(m3u8_master_data)
 
-        # Try to get DRM keys from SESSION-DATA (fast path: no extra HTTP request).
-        # Falls back to fetching the playlist M3U8 when:
-        #   - AudioSessionKeyInfo SESSION-DATA is absent (some wrapper-lite M3U8s), or
-        #   - stable_variant_id is not present in asset_metadata (key mismatch).
+        # Fast path: read DRM keys from SESSION-DATA to avoid a second HTTP request.
         used_session_key_path = False
         if session_key_metadata:
             asset_metadata = self._get_asset_metadata(m3u8_master_data)
@@ -661,12 +629,10 @@ class AppleMusicSongInterface:
         if not matching_playlists:
             return None
 
-        # For ALAC, optionally cap the sample rate.
-        # Audio group names follow the pattern: audio-alac-stereo-{sample_rate}-{bit_depth}
-        # e.g. audio-alac-stereo-44100-16, audio-alac-stereo-192000-24
+        # ALAC: group names follow "audio-alac-stereo-{sample_rate}-{bit_depth}"
         if codec == SongCodec.ALAC and self.alac_max_sample_rate is not None:
             def _sample_rate(playlist: dict) -> int:
-                audio = playlist["stream_info"]["audio"]  # e.g. "audio-alac-stereo-96000-24"
+                audio = playlist["stream_info"]["audio"]
                 try:
                     return int(audio.split("-")[3])
                 except (IndexError, ValueError):
@@ -675,9 +641,6 @@ class AppleMusicSongInterface:
             capped = [p for p in matching_playlists if _sample_rate(p) <= self.alac_max_sample_rate]
             if capped:
                 matching_playlists = capped
-            # If nothing is at or below the cap (e.g. track only has 48000
-            # but cap is 44100), fall through with all variants so the caller
-            # still gets the best available rather than failing silently.
 
         return max(
             matching_playlists,
@@ -776,9 +739,7 @@ class AppleMusicSongInterface:
         media.lyrics = await self.get_lyrics(media.media_metadata)
 
         if self.base.use_wrapper:
-            # Wrapper mode: build tags from AMP catalog (no webplayback needed).
-            # get_webplayback via wrapper-lite only returns an m3u8 URL, not the
-            # full Apple struct required by get_tags — so we skip it entirely.
+            # Wrapper mode: use AMP catalog for tags (webplayback returns only m3u8).
             media.tags = await self.get_tags_from_amp(
                 media.media_metadata,
                 media.lyrics.unsynced if media.lyrics else None,

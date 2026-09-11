@@ -417,9 +417,7 @@ class AppleMusicMusicVideoInterface:
             itunes_page_metadata,
         )
 
-        # Resolve stream_info first so we know the actual video resolution,
-        # then build the cover URL to match that resolution instead of the
-        # user-configured cover_size (which is intended for square album art).
+        # Resolve stream_info first to get actual video resolution for the cover URL.
         media.stream_info = await self.get_stream_info(
             media.media_metadata,
             itunes_page_metadata,
@@ -438,9 +436,6 @@ class AppleMusicMusicVideoInterface:
 
         media.decryption_key = await self.get_decryption_key(media.stream_info)
 
-        # Build cover URL using actual video width × height so the embedded
-        # thumbnail matches the MV resolution (e.g. 1920×1080) rather than
-        # cover_size×cover_size (e.g. 1200×1200 which is wrong for 16:9 content).
         media.cover = await self.base.get_cover_mv(
             media.media_metadata,
             width=media.stream_info.video_track.width,

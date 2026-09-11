@@ -26,8 +26,6 @@ class AppleMusicMusicVideoDownloader:
         self.remux_mode = remux_mode
         self.remux_format = remux_format
 
-    # ── helpers ───────────────────────────────────────────────────────────────
-
     async def _probe_has_convertible_subtitles(self, input_path: str) -> bool:
         """
         Return True  → video has a subtitle stream that ffmpeg CAN transcode to mov_text.
@@ -35,13 +33,11 @@ class AppleMusicMusicVideoDownloader:
         """
         ffprobe_path = self.base.full_ffmpeg_path
         if ffprobe_path:
-            # Prefer ffprobe sitting next to ffmpeg
             candidate = str(Path(ffprobe_path).parent / "ffprobe")
             import shutil
             ffprobe_path = shutil.which(candidate) or shutil.which("ffprobe") or None
 
         if not ffprobe_path:
-            # ffprobe not available: fall back to safe behaviour (skip mov_text)
             return False
 
         try:
@@ -50,7 +46,7 @@ class AppleMusicMusicVideoDownloader:
                 "-v", "quiet",
                 "-print_format", "json",
                 "-show_streams",
-                "-select_streams", "s",   # subtitle streams only
+                "-select_streams", "s",
                 input_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -63,7 +59,7 @@ class AppleMusicMusicVideoDownloader:
             streams = info.get("streams", [])
 
             if not streams:
-                return False   # no subtitle streams at all
+                return False
 
             for s in streams:
                 codec = s.get("codec_name", "").lower()
@@ -74,8 +70,6 @@ class AppleMusicMusicVideoDownloader:
 
         except Exception:
             return False  # probe failed → safe default
-
-    # ── remux methods ─────────────────────────────────────────────────────────
 
     async def _remux_mp4box(
         self,
@@ -104,10 +98,6 @@ class AppleMusicMusicVideoDownloader:
         input_path_audio: str,
         output_path: str,
     ):
-        # Probe first: only pass -c:s mov_text when the video actually has a
-        # subtitle track that ffmpeg can transcode.  CEA-608/708 closed-caption
-        # tracks embedded in H.264 SEI cause "Invalid data found" and must be
-        # dropped with -sn instead.
         has_convertible_subs = await self._probe_has_convertible_subtitles(
             input_path_video
         )

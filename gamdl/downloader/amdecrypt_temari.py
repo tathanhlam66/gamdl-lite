@@ -44,8 +44,6 @@ def _fetch_key_json(wrapper_base_url: str, adam_id: str, uri: str) -> bytes:
         )
 
     data = resp["data"]
-    # wrapper-lite /key returns: adamId, keyUri, contentKey, ctx, state, rcx, rax, rdx, r9, rbp
-    # Temari.from_json needs the subset: ctx, state, rcx, rax, rdx, r9, rbp
     temari_json = json.dumps(
         {
             "ctx":   data["ctx"],
@@ -97,7 +95,6 @@ def _decrypt_samples_temari(
                 enc_chunk = data[:truncated_len]
                 plain_chunk = tmpl.decrypt(enc_chunk)
                 result.extend(plain_chunk)
-            # Clear tail bytes
             if truncated_len < sample_len:
                 result.extend(data[truncated_len:])
 
@@ -132,19 +129,14 @@ async def decrypt_file_temari(
 
     logger.debug(f"[temari] decrypting {input_path} -> {output_path}")
 
-    # 1. Extract samples in a thread
     song_info = await asyncio.to_thread(extract_song, input_path)
 
-    # 2. Fetch both key JSONs from wrapper-lite (concurrently).
-    # IMPORTANT: wrapper-lite rejects adamId != "0" combined with the prefetch URI
-    # (returns HTTP 400 "invalid uri for adamId").  The prefetch context is shared
-    # and does not depend on the track; always request it with adamId="0".
+    # NOTE: prefetch URI must use adamId="0" — wrapper-lite rejects other IDs for it.
     json_prefetch, json_track = await asyncio.gather(
         asyncio.to_thread(_fetch_key_json, wrapper_base_url, "0", PREFETCH_URI),
         asyncio.to_thread(_fetch_key_json, wrapper_base_url, adam_id, fairplay_key),
     )
 
-    # 3. Decrypt all samples in a thread (CPU-bound)
     def _run_decrypt():
         data = _decrypt_samples_temari(json_prefetch, json_track, song_info.samples)
         if progress_callback:
@@ -155,7 +147,6 @@ async def decrypt_file_temari(
 
     decrypted_data = await asyncio.to_thread(_run_decrypt)
 
-    # 4. Write decrypted M4A
     await asyncio.to_thread(
         write_decrypted_m4a,
         output_path,
