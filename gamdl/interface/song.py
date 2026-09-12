@@ -3,6 +3,7 @@ import base64
 import datetime
 import json
 import re
+import unicodedata
 import urllib.parse
 from typing import AsyncGenerator, Callable
 from xml.dom import minidom
@@ -42,6 +43,7 @@ class AppleMusicSongInterface:
         use_album_date: bool = False,
         skip_stream_info: bool = False,
         ask_codec_function: Callable[[list[dict]], dict | None] | None = None,
+        karaoke_lyrics: bool = False,
     ):
         self.base = base
         self.synced_lyrics_format = synced_lyrics_format
@@ -50,6 +52,7 @@ class AppleMusicSongInterface:
         self.use_album_date = use_album_date
         self.skip_stream_info = skip_stream_info
         self.ask_codec_function = ask_codec_function
+        self.karaoke_lyrics = karaoke_lyrics
 
     async def get_lyrics(
         self,
@@ -109,13 +112,12 @@ class AppleMusicSongInterface:
     async def _get_lyrics_from_wrapper(self, adam_id: str) -> "Lyrics | None":
         """Fetch TTML lyrics from wrapper-lite /lyrics endpoint.
 
-        wrapper-lite returns the raw TTML string in data.lyrics.  Supports
-        word-timed syllable lyrics (syllable=1, default) and line-timed lyrics
-        (syllable=0).  Falls back to None on any error so the caller can try
-        the AMP relationships path.
+        syllable=1 returns word-timed (karaoke) TTML with per-word <span begin end>.
+        syllable=0 returns line-timed TTML (or plain text) but still includes
+        iTunesMetadata with translation/transliteration blocks for lyricsExtra.
+        Falls back to None on any error so the caller can try the AMP path.
         """
-        # Always request syllable=1; our TTML parser handles both line-timed and syllable-timed.
-        syllable_param = "1"
+        syllable_param = "1" if self.karaoke_lyrics else "0"
         url = (
             f"{self.base.wrapper_url.rstrip('/')}/lyrics"
             f"?adamId={urllib.parse.quote(adam_id)}"
@@ -162,39 +164,137 @@ class AppleMusicSongInterface:
         text = (p.text or "").strip()
         return text if text else None
 
+    def _lrc_timestamp(self, timestamp_ttml: str) -> str:
+        """Convert a TTML timestamp to ``mm:ss.xx`` string for LRC."""
+        ts = self._parse_ttml_timestamp(timestamp_ttml)
+        ms_new = ts.strftime("%f")[:-3]
+        if int(ms_new[-1]) >= 5:
+            ms = int(f"{int(ms_new[:2]) + 1}") * 10
+            ts += datetime.timedelta(milliseconds=ms) - datetime.timedelta(
+                microseconds=ts.microsecond
+            )
+        return ts.strftime("%M:%S.%f")[:-4]
+
+    @staticmethod
+    def _span_separator(prev_text: str, next_text: str) -> str:
+        """Return the word separator to insert between two adjacent karaoke spans.
+
+        Apple's syllable-timed TTML omits explicit spaces between Latin words —
+        each span contains only the word characters (no leading/trailing space).
+        CJK / Hangul / Kana scripts don't use word spaces at all.
+
+        Rules:
+        - If either side already has an explicit space → '' (don't double-space)
+        - If both sides are Latin/ASCII word chars (letters, digits, punctuation
+          like !, ?, ,, .) → ' '
+        - Otherwise → ''
+        """
+        prev = prev_text.strip("\n")
+        nxt = next_text.strip("\n")
+        if not prev or not nxt:
+            return ""
+        p_last, n_first = prev[-1], nxt[0]
+        if p_last == " " or n_first == " ":
+            return ""
+
+        def _is_latin_word_char(c: str) -> bool:
+            if c in ("!", "?", ",", ".", ";", ":", "'", "\u2019", "\u2018"):
+                return True
+            try:
+                name = unicodedata.name(c)
+            except ValueError:
+                return False
+            return name.startswith("LATIN") or name.startswith("DIGIT")
+
+        if _is_latin_word_char(p_last) and _is_latin_word_char(n_first):
+            return " "
+        return ""
+
+    def _get_lyrics_line_lrc_karaoke(self, p: ElementTree.Element) -> str:
+        """Build a karaoke Enhanced LRC line from a syllable-timed <p> element.
+
+        Format: ``[line_begin]<word_end>word <word_end>word …``
+
+        Each timed <span begin end> child becomes ``<word_end_ts>word``.
+        A space is inserted between adjacent spans when both sides are Latin/ASCII
+        (Apple omits explicit spaces in the TTML for Latin words).
+        Lines without timed <span> children fall back to plain LRC.
+        """
+        NS = "{http://www.w3.org/ns/ttml}"
+        line_begin = p.attrib.get("begin", "")
+        line_ts = self._lrc_timestamp(line_begin) if line_begin else "00:00.00"
+
+        timed_spans = [
+            c for c in p
+            if c.tag == f"{NS}span" and c.attrib.get("begin") and c.attrib.get("end")
+        ]
+        if not timed_spans:
+            return f"[{line_ts}]{self._get_p_text(p) or ''}"
+
+        parts: list[str] = []
+        for i, span in enumerate(timed_spans):
+            word_end_ts = self._lrc_timestamp(span.attrib["end"])
+            text = (span.text or "").strip("\n")
+            sep = (
+                self._span_separator(timed_spans[i - 1].text or "", text)
+                if i > 0
+                else ""
+            )
+            parts.append(f"{sep}<{word_end_ts}>{text}")
+
+        return f"[{line_ts}]{''.join(parts)}".rstrip()
+
     def _get_lyrics(
         self,
         lyrics_ttml: str,
     ) -> Lyrics:
+        # ElementTree rejects unbound namespace prefixes (e.g. itunes:key without
+        # xmlns:itunes).  Apple sometimes omits the declaration; inject it if needed.
+        if "xmlns:itunes" not in lyrics_ttml:
+            lyrics_ttml = re.sub(
+                r"(<tt\b)",
+                r'\1 xmlns:itunes="http://musickit.itunes.apple.com/ttml"',
+                lyrics_ttml,
+                count=1,
+            )
         lyrics_ttml_et = ElementTree.fromstring(lyrics_ttml)
         unsynced_lyrics = []
         synced_lyrics = []
         index = 1
 
-        for div in lyrics_ttml_et.iter("{http://www.w3.org/ns/ttml}div"):
+        NS = "{http://www.w3.org/ns/ttml}"
+
+        for div in lyrics_ttml_et.iter(f"{NS}div"):
             stanza = []
             unsynced_lyrics.append(stanza)
 
-            for p in div.iter("{http://www.w3.org/ns/ttml}p"):
+            for p in div.iter(f"{NS}p"):
                 text = self._get_p_text(p)
                 if text is not None:
                     stanza.append(text)
 
-                if p.attrib.get("begin"):
-                    if self.synced_lyrics_format == SyncedLyricsFormat.LRC:
-                        synced_lyrics.append(self._get_lyrics_line_lrc(p))
+                if not p.attrib.get("begin"):
+                    continue
 
-                    if self.synced_lyrics_format == SyncedLyricsFormat.SRT:
-                        synced_lyrics.append(self._get_lyrics_line_srt(index, p))
+                if self.synced_lyrics_format == SyncedLyricsFormat.TTML:
+                    if not synced_lyrics:
+                        synced_lyrics.append(
+                            minidom.parseString(lyrics_ttml).toprettyxml()
+                        )
+                    continue
 
-                    if self.synced_lyrics_format == SyncedLyricsFormat.TTML:
-                        if not synced_lyrics:
-                            synced_lyrics.append(
-                                minidom.parseString(lyrics_ttml).toprettyxml()
-                            )
-                        continue
-
+                if self.synced_lyrics_format == SyncedLyricsFormat.SRT:
+                    synced_lyrics.append(self._get_lyrics_line_srt(index, p))
                     index += 1
+                    continue
+
+                # LRC — supports karaoke
+                if self.karaoke_lyrics:
+                    synced_lyrics.append(self._get_lyrics_line_lrc_karaoke(p))
+                else:
+                    synced_lyrics.append(self._get_lyrics_line_lrc(p))
+
+                index += 1
 
         return Lyrics(
             synced="\n".join(synced_lyrics + ["\n"]) if synced_lyrics else None,

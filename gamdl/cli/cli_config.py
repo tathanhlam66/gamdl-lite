@@ -291,6 +291,19 @@ class CliConfig:
             is_flag=True,
         ),
     ]
+    karaoke_lyrics: Annotated[
+        bool,
+        option(
+            "--karaoke-lyrics",
+            help=(
+                "Request word-timed (syllable) lyrics from wrapper-lite (syllable=1). "
+                "Produces Enhanced LRC with per-word <end_ts>word tags that karaoke "
+                "players can use to highlight each word in real time. "
+                "Requires --use-wrapper. Has no effect with --synced-lyrics-format srt/ttml."
+            ),
+            is_flag=True,
+        ),
+    ]
     # Music Video Interface Options
     music_video_resolution: Annotated[
         MusicVideoResolution,

@@ -115,6 +115,18 @@ async def main(config: CliConfig):
             "They're not guaranteed to work due to API limitations."
         )
 
+    if config.karaoke_lyrics and not config.use_wrapper:
+        logger.warning(
+            "--karaoke-lyrics requires --use-wrapper (wrapper-lite provides syllable-timed TTML). "
+            "The flag will have no effect without it."
+        )
+
+    if config.karaoke_lyrics and config.synced_lyrics_format.value != "lrc":
+        logger.warning(
+            f"--karaoke-lyrics only affects LRC output but --synced-lyrics-format is "
+            f"'{config.synced_lyrics_format.value}'. Karaoke word tags will be ignored."
+        )
+
     if config.database_path:
         database = Database(config.database_path, config.overwrite)
         flat_filter = database.flat_filter
@@ -143,6 +155,7 @@ async def main(config: CliConfig):
         use_album_date=config.use_album_date,
         skip_stream_info=config.synced_lyrics_only,
         ask_codec_function=interactive_prompts.ask_song_codec,
+        karaoke_lyrics=config.karaoke_lyrics,
     )
     music_video_interface = AppleMusicMusicVideoInterface(
         base=base_interface,
