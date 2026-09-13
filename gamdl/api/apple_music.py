@@ -368,6 +368,7 @@ class AppleMusicApi:
         self,
         music_video_id: str,
         include: str = "albums",
+        extend: str = "sortName,sortArtistName,composerName,editorialNotes,isrc",
     ) -> dict:
         log = logger.bind(action="get_music_video", music_video_id=music_video_id)
 
@@ -378,6 +379,7 @@ class AppleMusicApi:
             ),
             {
                 "include": include,
+                "extend": extend,
             },
         )
 

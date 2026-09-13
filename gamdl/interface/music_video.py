@@ -95,53 +95,148 @@ class AppleMusicMusicVideoInterface:
         metadata: dict,
         itunes_page_metadata: dict,
     ) -> MediaTags:
+        """Build MediaTags for a music video.
+
+        Sources (merged by priority — first wins):
+        - AMP catalog attributes   : sortName, sortArtistName, composerName,
+                                     contentRating, isrc, genreNames
+        - AMP album relationship   : sortName (album sort), isCompilation
+        - iTunes Lookup (musicVideo): artistName, artistId, trackCensoredName,
+                                      trackExplicitness, releaseDate, primaryGenreName,
+                                      collectionCensoredName, track/disc numbers,
+                                      shortDescription / longDescription (comment)
+        - iTunes Page (product-dv) : copyright, genres[0].genreId, collectionId
+        """
         log = logger.bind(
             action="get_music_video_tags",
             media_id=self.base.parse_catalog_media_id(metadata),
         )
 
+        attr = metadata.get("attributes", {})
         url_media_id = self.base.parse_media_id_from_url(metadata)
-        lookup_metadata = (await self.base.itunes_api.get_lookup_result(url_media_id))[
-            "results"
-        ]
 
-        explicitness = lookup_metadata[0]["trackExplicitness"]
-        if explicitness == "notExplicit":
-            rating = MediaRating.NONE
-        elif explicitness == "explicit":
+        # --- AMP album relationship (sort-album, isCompilation) ----------------
+        amp_album_attr: dict = {}
+        try:
+            amp_album_attr = (
+                metadata["relationships"]["albums"]["data"][0]["attributes"]
+            )
+        except (KeyError, IndexError, TypeError):
+            pass
+
+        # --- iTunes Lookup — use entity=musicVideo so results[1] is the
+        #     collection record (album/EP) that contains this MV, not a random
+        #     album. Falls back to entity=album if musicVideo returns nothing. ---
+        lookup_results = []
+        try:
+            lookup_raw = await self.base.itunes_api.get_lookup_result(
+                url_media_id, entity="musicVideo"
+            )
+            lookup_results = lookup_raw.get("results", [])
+        except Exception:
+            pass
+
+        if not lookup_results:
+            try:
+                lookup_raw = await self.base.itunes_api.get_lookup_result(
+                    url_media_id, entity="album"
+                )
+                lookup_results = lookup_raw.get("results", [])
+            except Exception:
+                pass
+
+        lk_mv    = lookup_results[0] if len(lookup_results) > 0 else {}
+        lk_album = lookup_results[1] if len(lookup_results) > 1 else {}
+
+        # --- Rating -----------------------------------------------------------
+        explicitness = lk_mv.get("trackExplicitness", "")
+        if explicitness == "explicit":
             rating = MediaRating.EXPLICIT
-        else:
+        elif explicitness == "cleaned":
             rating = MediaRating.CLEAN
+        else:
+            # Fall back to AMP contentRating
+            cr = attr.get("contentRating", "")
+            if cr == "explicit":
+                rating = MediaRating.EXPLICIT
+            elif cr == "clean":
+                rating = MediaRating.CLEAN
+            else:
+                rating = MediaRating.NONE
 
-        tags = MediaTags(
-            artist=lookup_metadata[0]["artistName"],
-            artist_id=int(lookup_metadata[0]["artistId"]),
-            copyright=itunes_page_metadata.get("copyright"),
-            date=self.base.parse_date(lookup_metadata[0]["releaseDate"]),
-            genre=lookup_metadata[0]["primaryGenreName"],
-            genre_id=int(itunes_page_metadata["genres"][0]["genreId"]),
-            media_type=MediaType.MUSIC_VIDEO,
-            storefront=self.base.itunes_api.storefront_id,
-            title=lookup_metadata[0]["trackCensoredName"],
-            title_id=int(metadata["id"]),
-            rating=rating,
+        # --- Genre ------------------------------------------------------------
+        genre = (
+            lk_mv.get("primaryGenreName")
+            or (attr.get("genreNames") or [""])[0]
+            or None
+        )
+        try:
+            genre_id = int(itunes_page_metadata["genres"][0]["genreId"])
+        except (KeyError, IndexError, TypeError, ValueError):
+            genre_id = None
+
+        # --- Sort fields (AMP only) -------------------------------------------
+        title_sort  = attr.get("sortName")       or attr.get("name", "")
+        artist_sort = attr.get("sortArtistName") or attr.get("artistName", "")
+        album_sort  = amp_album_attr.get("sortName") or amp_album_attr.get("name")
+
+        # --- Comment: prefer AMP editorialNotes, fall back to iTunes short desc -
+        editorial = attr.get("editorialNotes") or {}
+        comment = (
+            editorial.get("short")
+            or editorial.get("standard")
+            or lk_mv.get("shortDescription")
+            or lk_mv.get("longDescription")
+        ) or None
+
+        # --- Composer (AMP attributes) ----------------------------------------
+        composer = attr.get("composerName") or None
+
+        # --- ISRC (AMP standard field) ----------------------------------------
+        isrc = attr.get("isrc") or None
+
+        # --- Copyright (iTunes Page primary, AMP album fallback) --------------
+        copyright_str = (
+            itunes_page_metadata.get("copyright")
+            or amp_album_attr.get("copyright")
         )
 
-        if len(lookup_metadata) > 1:
-            album = await self.base.get_album_cached(
-                itunes_page_metadata["collectionId"]
-            )
-            if not album:
-                return tags
+        tags = MediaTags(
+            artist=lk_mv.get("artistName") or attr.get("artistName", ""),
+            artist_id=int(lk_mv["artistId"]) if lk_mv.get("artistId") else None,
+            artist_sort=artist_sort,
+            comment=comment,
+            composer=composer,
+            copyright=copyright_str,
+            date=self.base.parse_date(
+                lk_mv.get("releaseDate") or attr.get("releaseDate")
+            ),
+            genre=genre,
+            genre_id=genre_id,
+            isrc=isrc,
+            media_type=MediaType.MUSIC_VIDEO,
+            rating=rating,
+            storefront=self.base.itunes_api.storefront_id,
+            title=lk_mv.get("trackCensoredName") or attr.get("name", ""),
+            title_id=int(metadata["id"]),
+            title_sort=title_sort,
+        )
 
-            tags.album = lookup_metadata[1]["collectionCensoredName"]
-            tags.album_artist = lookup_metadata[1]["artistName"]
-            tags.album_id = int(itunes_page_metadata["collectionId"])
-            tags.disc = lookup_metadata[0]["discNumber"]
-            tags.disc_total = lookup_metadata[0]["discCount"]
-            tags.compilation = album["attributes"]["isCompilation"]
-            tags.track = lookup_metadata[0]["trackNumber"]
-            tags.track_total = lookup_metadata[0]["trackCount"]
+        # --- Album / collection tags (present only when MV belongs to one) ----
+        collection_id = itunes_page_metadata.get("collectionId")
+        if lk_album and collection_id:
+            album_amp = await self.base.get_album_cached(str(collection_id))
+            album_amp_attr: dict = album_amp["attributes"] if album_amp else {}
+
+            tags.album        = lk_album.get("collectionCensoredName") or amp_album_attr.get("name")
+            tags.album_artist = lk_album.get("artistName")             or amp_album_attr.get("artistName")
+            tags.album_id     = int(collection_id)
+            tags.album_sort   = album_sort or album_amp_attr.get("sortName")
+            tags.compilation  = album_amp_attr.get("isCompilation", False)
+            tags.disc         = lk_mv.get("discNumber")  or 1
+            tags.disc_total   = lk_mv.get("discCount")   or 1
+            tags.track        = lk_mv.get("trackNumber") or 1
+            tags.track_total  = lk_mv.get("trackCount")  or 1
 
         log.debug("success", tags=tags)
 
