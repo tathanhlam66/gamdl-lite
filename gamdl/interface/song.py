@@ -97,7 +97,8 @@ class AppleMusicSongInterface:
             )
             is not None
         ):
-            lyrics = self._get_lyrics(
+            lyrics = await asyncio.to_thread(
+                self._get_lyrics,
                 song_metadata["relationships"]["lyrics"]["data"][0]["attributes"][
                     "ttml"
                 ],
@@ -139,7 +140,7 @@ class AppleMusicSongInterface:
             return None
 
         try:
-            return self._get_lyrics(ttml)
+            return await asyncio.to_thread(self._get_lyrics, ttml)
         except Exception:
             return None
 
@@ -448,14 +449,33 @@ class AppleMusicSongInterface:
         album_id_str = album_data["id"] if album_data else None
 
         # entity=album returns [song_record, album_record] with artistId, genreId, etc.
+        # When use_album_date is set, run lookup and date fetch concurrently using
+        # album_id_str already available from the AMP relationship (no need to wait
+        # for lookup to finish first).
         lookup_results = []
-        try:
-            lookup_data = await self.base.itunes_api.get_lookup_result(
-                song_id, entity="album"
+        date = None
+
+        if self.use_album_date and album_id_str:
+            lookup_raw, date = await asyncio.gather(
+                self.base.itunes_api.get_lookup_result(song_id, entity="album"),
+                self.base.get_media_date(album_id_str),
+                return_exceptions=True,
             )
-            lookup_results = lookup_data.get("results", [])
-        except Exception:
-            pass  # degrade gracefully — AMP data is still usable
+            if isinstance(lookup_raw, Exception):
+                lookup_raw = {}
+            if isinstance(date, Exception):
+                date = None
+            lookup_results = (
+                lookup_raw.get("results", []) if isinstance(lookup_raw, dict) else []
+            )
+        else:
+            try:
+                lookup_data = await self.base.itunes_api.get_lookup_result(
+                    song_id, entity="album"
+                )
+                lookup_results = lookup_data.get("results", [])
+            except Exception:
+                pass  # degrade gracefully — AMP data is still usable
 
         lk_song  = lookup_results[0] if len(lookup_results) > 0 else {}
         lk_album = lookup_results[1] if len(lookup_results) > 1 else {}
@@ -521,12 +541,17 @@ class AppleMusicSongInterface:
         copyright_str = (album_attr.get("copyright")
                          or lk_album.get("copyright"))
 
-        if self.use_album_date and album_id:
-            date = await self.base.get_media_date(str(album_id))
-        else:
-            release_date_str = (lk_song.get("releaseDate")
-                                or attr.get("releaseDate"))
-            date = self.base.parse_date(release_date_str) if release_date_str else None
+        if not self.use_album_date or not album_id_str:
+            # date not yet resolved (no parallel fetch was done); resolve now.
+            album_id_for_date = _int(
+                lk_song.get("collectionId") or lk_album.get("collectionId") or album_id_str
+            )
+            if self.use_album_date and album_id_for_date and not date:
+                date = await self.base.get_media_date(str(album_id_for_date))
+            else:
+                release_date_str = (lk_song.get("releaseDate")
+                                    or attr.get("releaseDate"))
+                date = self.base.parse_date(release_date_str) if release_date_str else None
 
         composer    = attr.get("composerName") or lk_song.get("composerName")
         composer_id = None  # not in AMP or iTunes Lookup for songs
@@ -834,19 +859,25 @@ class AppleMusicSongInterface:
                 media.index,
             )
 
-        media.cover = await self.base.get_cover(media.media_metadata)
-
-        media.lyrics = await self.get_lyrics(media.media_metadata)
-
         if self.base.use_wrapper:
-            # Wrapper mode: use AMP catalog for tags (webplayback returns only m3u8).
-            media.tags = await self.get_tags_from_amp(
-                media.media_metadata,
-                media.lyrics.unsynced if media.lyrics else None,
+            # Wrapper mode: cover, lyrics, and AMP tags are fully independent.
+            media.cover, media.lyrics, media.tags = await asyncio.gather(
+                self.base.get_cover(media.media_metadata),
+                self.get_lyrics(media.media_metadata),
+                self.get_tags_from_amp(media.media_metadata, None),
             )
+            # Patch unsynced lyrics into tags now that both are resolved.
+            if media.lyrics and media.lyrics.unsynced and media.tags:
+                media.tags.lyrics = media.lyrics.unsynced
             webplayback = None
         else:
-            webplayback = await self.base.apple_music_api.get_webplayback(media.media_id)
+            # Non-wrapper: cover and lyrics are independent; webplayback needed
+            # for both tags and stream_info — fetch all three in parallel.
+            media.cover, media.lyrics, webplayback = await asyncio.gather(
+                self.base.get_cover(media.media_metadata),
+                self.get_lyrics(media.media_metadata),
+                self.base.apple_music_api.get_webplayback(media.media_id),
+            )
             media.tags = await self.get_tags(
                 webplayback,
                 media.lyrics.unsynced if media.lyrics else None,

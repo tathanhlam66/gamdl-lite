@@ -60,13 +60,14 @@ class AppleMusicSongDownloader:
         fairplay_key: str,
     ) -> None:
         """Decrypt via wrapper-lite HTTP /key + Temari (replaces old TCP socket path)."""
-        await decrypt_file_temari(
-            self.base.wrapper_url,
-            media_id,
-            fairplay_key,
-            input_path,
-            output_path,
-        )
+        async with self.base.spinner("Decrypting…"):
+            await decrypt_file_temari(
+                self.base.wrapper_url,
+                media_id,
+                fairplay_key,
+                input_path,
+                output_path,
+            )
 
     async def _decrypt_amdecrypt_hex(
         self,
@@ -75,12 +76,13 @@ class AppleMusicSongDownloader:
         decryption_key: str,
         legacy: bool = False,
     ) -> None:
-        await decrypt_file_hex(
-            input_path,
-            output_path,
-            decryption_key,
-            legacy=legacy,
-        )
+        async with self.base.spinner("Decrypting…"):
+            await decrypt_file_hex(
+                input_path,
+                output_path,
+                decryption_key,
+                legacy=legacy,
+            )
 
     async def stage(
         self,

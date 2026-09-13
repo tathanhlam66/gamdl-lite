@@ -77,20 +77,21 @@ class AppleMusicMusicVideoDownloader:
         input_path_audio: str,
         output_path: str,
     ):
-        await async_subprocess(
-            self.base.full_mp4box_path,
-            "-quiet",
-            "-add",
-            input_path_audio,
-            "-add",
-            input_path_video,
-            "-itags",
-            "artist=placeholder",
-            "-keep-utc",
-            "-new",
-            output_path,
-            silent=self.base.silent,
-        )
+        async with self.base.spinner("Remuxing…"):
+            await async_subprocess(
+                self.base.full_mp4box_path,
+                "-quiet",
+                "-add",
+                input_path_audio,
+                "-add",
+                input_path_video,
+                "-itags",
+                "artist=placeholder",
+                "-keep-utc",
+                "-new",
+                output_path,
+                silent=self.base.silent,
+            )
 
     async def _remux_ffmpeg(
         self,
@@ -108,23 +109,24 @@ class AppleMusicMusicVideoDownloader:
         else:
             subtitle_args = ["-sn"]   # drop untranscodable / absent subtitle tracks
 
-        await async_subprocess(
-            self.base.full_ffmpeg_path,
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            input_path_video,
-            "-i",
-            input_path_audio,
-            "-c",
-            "copy",
-            *subtitle_args,
-            "-movflags",
-            "+faststart",
-            output_path,
-            silent=self.base.silent,
-        )
+        async with self.base.spinner("Remuxing…"):
+            await async_subprocess(
+                self.base.full_ffmpeg_path,
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                input_path_video,
+                "-i",
+                input_path_audio,
+                "-c",
+                "copy",
+                *subtitle_args,
+                "-movflags",
+                "+faststart",
+                output_path,
+                silent=self.base.silent,
+            )
 
     async def _decrypt_mp4decrypt(
         self,
@@ -132,14 +134,15 @@ class AppleMusicMusicVideoDownloader:
         output_path: str,
         decryption_key: str,
     ):
-        await async_subprocess(
-            self.base.full_mp4decrypt_path,
-            "--key",
-            f"1:{decryption_key}",
-            input_path,
-            output_path,
-            silent=self.base.silent,
-        )
+        async with self.base.spinner("Decrypting…"):
+            await async_subprocess(
+                self.base.full_mp4decrypt_path,
+                "--key",
+                f"1:{decryption_key}",
+                input_path,
+                output_path,
+                silent=self.base.silent,
+            )
 
     async def stage(
         self,

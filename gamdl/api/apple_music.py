@@ -183,6 +183,12 @@ class AppleMusicApi:
                 "authorization": f"Bearer {token}",
                 "origin": APPLE_MUSIC_HOMEPAGE_URL,
             },
+            http2=True,
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+                keepalive_expiry=30.0,
+            ),
             transport=RetryTransport(
                 retry=Retry(
                     total=6,
@@ -258,7 +264,15 @@ class AppleMusicApi:
         """
         wrapper_base = wrapper_url.rstrip("/")
 
-        wrapper_client = httpx.AsyncClient(timeout=30.0)
+        wrapper_client = httpx.AsyncClient(
+            timeout=30.0,
+            http2=True,
+            limits=httpx.Limits(
+                max_connections=10,
+                max_keepalive_connections=5,
+                keepalive_expiry=30.0,
+            ),
+        )
 
         try:
             response = await wrapper_client.get(f"{wrapper_base}/status")
