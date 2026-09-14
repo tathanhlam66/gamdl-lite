@@ -61,13 +61,15 @@ class AppleMusicSongDownloader:
     ) -> None:
         """Decrypt via wrapper-lite HTTP /key + Temari (replaces old TCP socket path)."""
         async with self.base.spinner("Decrypting…"):
-            await decrypt_file_temari(
+            warnings = await decrypt_file_temari(
                 self.base.wrapper_url,
                 media_id,
                 fairplay_key,
                 input_path,
                 output_path,
             )
+        for msg in warnings or []:
+            logger.warning("decrypt_temari", detail=msg)
 
     async def _decrypt_amdecrypt_hex(
         self,

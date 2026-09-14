@@ -178,8 +178,7 @@ async def decrypt_file_temari(
         asyncio.to_thread(_fetch_key_json, wrapper_base_url, "0", PREFETCH_URI),
         asyncio.to_thread(_fetch_key_json, wrapper_base_url, adam_id, fairplay_key),
     )
-    for msg in warns_pre + warns_track:
-        logger.warning("decrypt_temari", detail=msg)
+    key_warnings = warns_pre + warns_track
 
     def _run_decrypt():
         data = _decrypt_samples_temari(json_prefetch, json_track, song_info.samples)
@@ -200,3 +199,4 @@ async def decrypt_file_temari(
     )
 
     logger.debug("decrypt_temari_done", output=output_path)
+    return key_warnings

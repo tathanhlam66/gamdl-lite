@@ -293,11 +293,11 @@ class AppleMusicDownloader:
             else:
                 async with self.base.spinner("Verifying…"):
                     integrity_errors = await self._verify_integrity(item.final_path)
-                _verify_log = logger.bind(action="verify_integrity", path=item.final_path)
+                filename = Path(item.final_path).name
                 if integrity_errors:
-                    _verify_log.warning("integrity_check_warnings", ffmpeg_output=integrity_errors)
+                    logger.warning(f"Integrity check failed: {filename}", detail=integrity_errors)
                 else:
-                    _verify_log.info("integrity_check_passed")
+                    logger.info(f"Integrity check passed: {filename}")
 
     def _cleanup_temp(self, folder_tag: str) -> None:
         log = logger.bind(action="cleanup_temp", folder_tag=folder_tag)

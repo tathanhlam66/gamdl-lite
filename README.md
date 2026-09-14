@@ -139,7 +139,6 @@ The file is created automatically on first run. Command-line arguments override 
 | **Song Options**                |                                                                   |                                                |
 | `--synced-lyrics-format`        | Synced lyrics format                                              | `lrc`                                          |
 | `--song-codec-priority`         | Comma-separated codec priority                                    | `aac-legacy`                                   |
-| `--alac-max-sample-rate`        | Cap ALAC sample rate in Hz (e.g. `44100`, `48000`, `96000`)       | -                                              |
 | `--use-album-date`              | Use album release date for songs                                  | `false`                                        |
 | `--no-synced-lyrics`            | Don't download synced lyrics                                      | `false`                                        |
 | `--synced-lyrics-only`          | Download only synced lyrics                                       | `false`                                        |
@@ -248,9 +247,6 @@ Use ISO 639-1 language codes (e.g., `en-US`, `es-ES`, `ja-JP`, `pt-BR`). Don't a
 - `ac3` - AC3 640kbps
 - `alac` - ALAC lossless up to 24-bit/192kHz (requires wrapper)
 - `ask` - Interactive experimental codec selection
-
-> [!TIP]
-> When using `alac`, use `--alac-max-sample-rate` to cap the sample rate. For example, `--alac-max-sample-rate 44100` selects CD lossless (44.1kHz/16-bit) only. If no variant at or below the cap exists, the lowest available variant is used as fallback — the download never fails.
 
 ### Synced Lyrics Format
 
