@@ -59,6 +59,10 @@ Add these tools to your system PATH or specify their paths via command-line argu
 
    See the [Dependencies](#dependencies) section to determine which tools you need based on your use case, then follow the [Tool Reference](#tool-reference) for download and installation instructions.
 
+4. **A Guide for Termux User**
+
+   Setup and use gamdl lite for [termux user](https://telegra.ph/Setup-and-run-gamdl-on-Termux-09-14)
+   
 ## 🚀 Usage
 
 ```bash
@@ -143,6 +147,7 @@ The file is created automatically on first run. Command-line arguments override 
 | `--no-synced-lyrics`            | Don't download synced lyrics                                      | `false`                                        |
 | `--synced-lyrics-only`          | Download only synced lyrics                                       | `false`                                        |
 | `--embed-synced-lyrics`         | Embed synced lyrics into the file, replacing the unsynced         | `false`                                        |
+| `--karaoke-lyrics`              | Produces Enhanced LRC with per-word that karaoke                  | `false`                                        |
 | **Music Video Options**         |                                                                   |                                                |
 | `--music-video-resolution`      | Max music video resolution                                        | `1080p`                                        |
 | `--music-video-codec-priority`  | Comma-separated codec priority                                    | `h264,h265`                                    |
@@ -253,6 +258,9 @@ Use ISO 639-1 language codes (e.g., `en-US`, `es-ES`, `ja-JP`, `pt-BR`). Don't a
 - `lrc`
 - `srt` - SubRip subtitle format (more accurate timing)
 - `ttml` - Native Apple Music format (not compatible with most media players)
+
+> [!TIP] 
+> When using `--karaoke-lyrics` requires `--use-wrapper` - The flag will have no effect without it.
 
 ### Music Video Codecs
 
