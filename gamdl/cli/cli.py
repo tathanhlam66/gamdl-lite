@@ -74,7 +74,7 @@ async def main(config: CliConfig):
         wrapper_class=structlog.make_filtering_bound_logger(config.log_level),
     )
 
-    logger.info(f"Starting Gamdl {__version__}")
+    logger.info(f"Starting Gamdl lite {__version__}")
 
     if config.use_wrapper:
         try:
