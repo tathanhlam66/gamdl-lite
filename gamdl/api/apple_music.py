@@ -266,7 +266,6 @@ class AppleMusicApi:
 
         wrapper_client = httpx.AsyncClient(
             timeout=30.0,
-            http2=True,
             limits=httpx.Limits(
                 max_connections=10,
                 max_keepalive_connections=5,
@@ -274,22 +273,35 @@ class AppleMusicApi:
             ),
         )
 
-        try:
-            response = await wrapper_client.get(f"{wrapper_base}/status")
-            response.raise_for_status()
-            status_data = response.json()
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        _status_retries = 3
+        _status_delay   = 2.0
+        last_exc: Exception | None = None
+
+        for attempt in range(_status_retries):
+            if attempt:
+                await asyncio.sleep(_status_delay * attempt)
+            try:
+                response = await wrapper_client.get(f"{wrapper_base}/status")
+                response.raise_for_status()
+                status_data = response.json()
+                last_exc = None
+                break
+            except (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException) as exc:
+                last_exc = exc
+                continue
+            except httpx.HTTPStatusError as exc:
+                await wrapper_client.aclose()
+                raise GamdlApiResponseError(
+                    f"wrapper-lite /status returned HTTP {exc.response.status_code}",
+                    status_code=exc.response.status_code,
+                )
+
+        if last_exc is not None:
             await wrapper_client.aclose()
             raise GamdlApiResponseError(
                 f"Cannot connect to wrapper-lite at {wrapper_base} "
-                f"({type(exc).__name__}). "
+                f"({type(last_exc).__name__}). "
                 "Make sure wrapper-lite is running before starting gamdl."
-            )
-        except httpx.HTTPStatusError as exc:
-            await wrapper_client.aclose()
-            raise GamdlApiResponseError(
-                f"wrapper-lite /status returned HTTP {exc.response.status_code}",
-                status_code=exc.response.status_code,
             )
 
         regions = status_data.get("data", {}).get("regions", [])
