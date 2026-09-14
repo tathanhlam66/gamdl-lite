@@ -39,7 +39,6 @@ class AppleMusicSongInterface:
         base: AppleMusicBaseInterface,
         synced_lyrics_format: SyncedLyricsFormat = SyncedLyricsFormat.LRC,
         codec_priority: list[SongCodec] = [SongCodec.AAC_LEGACY],
-        alac_max_sample_rate: int | None = None,
         use_album_date: bool = False,
         skip_stream_info: bool = False,
         ask_codec_function: Callable[[list[dict]], dict | None] | None = None,
@@ -48,7 +47,6 @@ class AppleMusicSongInterface:
         self.base = base
         self.synced_lyrics_format = synced_lyrics_format
         self.codec_priority = codec_priority
-        self.alac_max_sample_rate = alac_max_sample_rate
         self.use_album_date = use_album_date
         self.skip_stream_info = skip_stream_info
         self.ask_codec_function = ask_codec_function
@@ -746,7 +744,8 @@ class AppleMusicSongInterface:
         matching_playlists = [
             playlist
             for playlist in m3u8_data["playlists"]
-            if re.fullmatch(
+            if playlist["stream_info"].get("audio")
+            and re.fullmatch(
                 SONG_CODEC_REGEX_MAP[codec.value], playlist["stream_info"]["audio"]
             )
         ]
@@ -754,35 +753,28 @@ class AppleMusicSongInterface:
         if not matching_playlists:
             return None
 
-        # ALAC: group names follow "audio-alac-stereo-{sample_rate}-{bit_depth}"
-        if codec == SongCodec.ALAC and self.alac_max_sample_rate is not None:
-            def _sample_rate(playlist: dict) -> int:
-                audio = playlist["stream_info"]["audio"]
-                try:
-                    return int(audio.split("-")[3])
-                except (IndexError, ValueError):
-                    return 0
-
-            capped = [p for p in matching_playlists if _sample_rate(p) <= self.alac_max_sample_rate]
-            if capped:
-                matching_playlists = capped
-
         return max(
             matching_playlists,
             key=lambda x: x["stream_info"]["average_bandwidth"],
         )
 
     async def _get_playlist_from_user(self, m3u8_data: dict) -> dict | None:
-        if self.ask_codec_function:
-            playlist = self.ask_codec_function(
-                [playlist for playlist in m3u8_data["playlists"]]
-            )
-            if asyncio.iscoroutine(playlist):
-                playlist = await playlist
+        if not self.ask_codec_function:
+            return None
 
-            return playlist
+        playlists = [
+            p for p in m3u8_data["playlists"]
+            if p["stream_info"].get("audio")
+        ]
 
-        return None
+        if not playlists:
+            return None
+
+        playlist = self.ask_codec_function(playlists)
+        if asyncio.iscoroutine(playlist):
+            playlist = await playlist
+
+        return playlist
 
     def _get_drm_uri_from_session_key(
         self,

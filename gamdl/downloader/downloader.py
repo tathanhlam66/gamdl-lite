@@ -250,20 +250,15 @@ class AppleMusicDownloader:
 
         log.debug("success")
 
-    async def _verify_integrity(self, final_path: str) -> None:
-        """Run ffmpeg decode check on the output file.
+    async def _verify_integrity(self, final_path: str) -> str | None:
+        """Run ffmpeg decode check; return error string or None if clean.
 
-        ffmpeg -v error -i <file> -f null - prints nothing on a healthy file
-        and writes any decode warnings/errors to stderr.  We capture stderr and
-        log it as a warning so the user is informed without aborting the
-        download — the file is already at its final location and may be
-        perfectly usable (e.g. verbatim ALAC frames confuse some decoders).
+        Logging is deferred to the caller so it fires after the spinner clears.
         """
         if not self.base.full_ffmpeg_path:
             logger.warning("verify_integrity: ffmpeg not found, skipping")
-            return
+            return None
 
-        log = logger.bind(action="verify_integrity", path=final_path)
         proc = await asyncio.create_subprocess_exec(
             self.base.full_ffmpeg_path,
             "-v", "error",
@@ -274,10 +269,7 @@ class AppleMusicDownloader:
         )
         _, stderr = await proc.communicate()
         errors = stderr.decode(errors="replace").strip()
-        if errors:
-            log.warning("integrity_check_warnings", ffmpeg_output=errors)
-        else:
-            log.info("integrity_check_passed")
+        return errors or None
 
     async def _final_processing(
         self,
@@ -300,7 +292,12 @@ class AppleMusicDownloader:
                 )
             else:
                 async with self.base.spinner("Verifying…"):
-                    await self._verify_integrity(item.final_path)
+                    integrity_errors = await self._verify_integrity(item.final_path)
+                _verify_log = logger.bind(action="verify_integrity", path=item.final_path)
+                if integrity_errors:
+                    _verify_log.warning("integrity_check_warnings", ffmpeg_output=integrity_errors)
+                else:
+                    _verify_log.info("integrity_check_passed")
 
     def _cleanup_temp(self, folder_tag: str) -> None:
         log = logger.bind(action="cleanup_temp", folder_tag=folder_tag)

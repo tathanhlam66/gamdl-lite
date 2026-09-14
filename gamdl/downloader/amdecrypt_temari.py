@@ -11,51 +11,93 @@ No separate decrypt port / TCP socket needed.
 
 import asyncio
 import json
-import logging
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from typing import List, Optional
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 # Prefetch key used for the first sample description (desc_index 0)
 PREFETCH_URI = "skd://itunes.apple.com/P000000000/s1/e1"
 
+_RETRY_ATTEMPTS = 4
+_RETRY_BASE_DELAY = 1.0   # seconds; doubles each attempt (1 → 2 → 4 → 8)
+_RETRY_ON_CODES  = {500, 503}
 
-def _fetch_key_json(wrapper_base_url: str, adam_id: str, uri: str) -> bytes:
-    """
-    Synchronous HTTP call to wrapper-lite /key endpoint.
-    Returns the raw JSON response body.
 
-    wrapper_base_url: e.g. "http://127.0.0.1:12340"
+def _fetch_key_json(wrapper_base_url: str, adam_id: str, uri: str) -> tuple[bytes, list[str]]:
+    """HTTP GET /key on wrapper-lite with exponential-backoff retry.
+
+    Returns (temari_json_bytes, warnings) where warnings is a list of
+    human-readable strings for any retried attempts. Logging is deferred
+    to the async caller so it never races with the terminal spinner.
+
+    Raises RuntimeError on final failure or non-retryable error.
     """
     url = (
         f"{wrapper_base_url.rstrip('/')}/key"
         f"?adamId={urllib.parse.quote(adam_id)}"
         f"&uri={urllib.parse.quote(uri)}"
     )
-    with urllib.request.urlopen(url, timeout=30) as r:
-        body = r.read()
 
-    resp = json.loads(body)
-    if resp.get("code") != 0:
+    warnings: list[str] = []
+    last_exc: Exception | None = None
+
+    for attempt in range(_RETRY_ATTEMPTS):
+        if attempt:
+            delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            warnings.append(
+                f"/key transient error (attempt {attempt}/{_RETRY_ATTEMPTS - 1})"
+                f", retrying in {delay:.0f}s"
+            )
+            time.sleep(delay)
+
+        try:
+            with urllib.request.urlopen(url, timeout=30) as r:
+                body = r.read()
+        except urllib.error.URLError as exc:
+            last_exc = exc
+            warnings.append(f"/key network error (attempt {attempt + 1}): {exc}")
+            continue
+
+        resp = json.loads(body)
+        code = resp.get("code")
+
+        if code == 0:
+            data = resp["data"]
+            return (
+                json.dumps(
+                    {
+                        "ctx":   data["ctx"],
+                        "state": data["state"],
+                        "rcx":   data.get("rcx", "0x0"),
+                        "rax":   data.get("rax", "0x0"),
+                        "rdx":   data.get("rdx", "0x0"),
+                        "r9":    data.get("r9",  "0x0"),
+                        "rbp":   data.get("rbp", "0x0"),
+                    }
+                ).encode(),
+                warnings,
+            )
+
+        if code in _RETRY_ON_CODES:
+            last_exc = RuntimeError(f"code={code} msg={resp.get('msg', '')}")
+            warnings.append(f"/key server error code={code} (attempt {attempt + 1})")
+            continue
+
+        # Non-retryable (auth, bad request, …)
         raise RuntimeError(
             f"wrapper-lite /key failed for adamId={adam_id} uri={uri}: {resp}"
         )
 
-    data = resp["data"]
-    temari_json = json.dumps(
-        {
-            "ctx":   data["ctx"],
-            "state": data["state"],
-            "rcx":   data.get("rcx", "0x0"),
-            "rax":   data.get("rax", "0x0"),
-            "rdx":   data.get("rdx", "0x0"),
-            "r9":    data.get("r9",  "0x0"),
-            "rbp":   data.get("rbp", "0x0"),
-        }
-    ).encode()
-    return temari_json
+    raise RuntimeError(
+        f"wrapper-lite /key failed after {_RETRY_ATTEMPTS} attempts "
+        f"(adamId={adam_id} uri={uri}): {last_exc}"
+    )
 
 
 def _decrypt_samples_temari(
@@ -127,15 +169,17 @@ async def decrypt_file_temari(
     """
     from .amdecrypt import extract_song, write_decrypted_m4a  # local import avoids circular
 
-    logger.debug(f"[temari] decrypting {input_path} -> {output_path}")
+    logger.debug("decrypt_temari", input=input_path, output=output_path)
 
     song_info = await asyncio.to_thread(extract_song, input_path)
 
     # NOTE: prefetch URI must use adamId="0" — wrapper-lite rejects other IDs for it.
-    json_prefetch, json_track = await asyncio.gather(
+    (json_prefetch, warns_pre), (json_track, warns_track) = await asyncio.gather(
         asyncio.to_thread(_fetch_key_json, wrapper_base_url, "0", PREFETCH_URI),
         asyncio.to_thread(_fetch_key_json, wrapper_base_url, adam_id, fairplay_key),
     )
+    for msg in warns_pre + warns_track:
+        logger.warning("decrypt_temari", detail=msg)
 
     def _run_decrypt():
         data = _decrypt_samples_temari(json_prefetch, json_track, song_info.samples)
@@ -155,4 +199,4 @@ async def decrypt_file_temari(
         input_path,
     )
 
-    logger.debug(f"[temari] done: {output_path}")
+    logger.debug("decrypt_temari_done", output=output_path)
