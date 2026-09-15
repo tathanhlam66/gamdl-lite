@@ -137,6 +137,7 @@ class StreamInfo:
     width: int = None
     height: int = None
     legacy: bool = None
+    use_playready: bool = False
 
 
 @dataclass

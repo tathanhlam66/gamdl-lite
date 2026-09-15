@@ -15,6 +15,7 @@ from .exceptions import (
 )
 from .types import (
     AppleMusicMedia,
+    DecryptionKey,
     DecryptionKeyAv,
     MediaFileFormat,
     MediaTags,
@@ -268,9 +269,9 @@ class AppleMusicMusicVideoInterface:
                 webplayback_response["songList"][0],
             )
 
-        playlist_master_m3u8_obj = m3u8.loads(
-            (await self.base.get_response(m3u8_master_url)).text
-        )
+        master_text = (await self.base.get_response(m3u8_master_url)).text
+        playlist_master_m3u8_obj = m3u8.loads(master_text)
+        playlist_master_m3u8_obj._original_text = master_text
         playlist_master_m3u8_obj.base_uri = m3u8_master_url.rpartition("/")[0]
         stream_info_video = await self._get_stream_info_video(playlist_master_m3u8_obj)
         stream_info_audio = await self._get_stream_info_audio(
@@ -383,11 +384,12 @@ class AppleMusicMusicVideoInterface:
         self,
         m3u8_obj: m3u8.M3U8,
         key_format: str,
-    ) -> str:
-        return next(
+    ) -> str | None:
+        match = next(
             (key for key in m3u8_obj.keys if key.keyformat == key_format),
             None,
-        ).uri
+        )
+        return match.uri if match is not None else None
 
     def _get_widevine_pssh(self, m3u8_obj: m3u8.M3U8) -> str:
         return self._get_key_by_format(
@@ -406,6 +408,32 @@ class AppleMusicMusicVideoInterface:
             m3u8_obj,
             "com.apple.streamingkeydelivery",
         )
+
+    @staticmethod
+    def _playlist_uses_playready(master_m3u8_text: str, variant_uri: str) -> bool:
+        """Return True if the chosen variant's ALLOWED-CPC contains 'SL3000'.
+
+        Apple uses SL3000 (Security Level 3000) exclusively for 4K PlayReady
+        streams. This is the same detection strategy used by AMD.
+        """
+        attrs: dict | None = None
+        for raw_line in master_m3u8_text.splitlines():
+            line = raw_line.strip()
+            if line.startswith("#EXT-X-STREAM-INF:"):
+                attr_str = line[len("#EXT-X-STREAM-INF:"):]
+                attrs = {
+                    k: v.strip('"')
+                    for part in attr_str.split(",")
+                    if "=" in part
+                    for k, v in [part.split("=", 1)]
+                }
+                continue
+            if attrs is None or not line or line.startswith("#"):
+                continue
+            if line == variant_uri:
+                return "SL3000" in attrs.get("ALLOWED-CPC", "").upper()
+            attrs = None
+        return False
 
     async def _get_stream_info_video(
         self,
@@ -428,6 +456,12 @@ class AppleMusicMusicVideoInterface:
         stream_info.stream_url = playlist.uri
         stream_info.codec = playlist.stream_info.codecs
         stream_info.width, stream_info.height = playlist.stream_info.resolution
+
+        # Detect PlayReady before fetching the media playlist
+        master_text = getattr(playlist_master_m3u8_obj, "_original_text", "")
+        stream_info.use_playready = self._playlist_uses_playready(
+            master_text, playlist.uri
+        )
 
         playlist_m3u8_obj = m3u8.loads(
             (await self.base.get_response(stream_info.stream_url)).text
@@ -468,21 +502,94 @@ class AppleMusicMusicVideoInterface:
         self,
         stream_info: StreamInfoAv,
     ) -> DecryptionKeyAv:
-        decryption_key_video, decryption_key_audio = await asyncio.gather(
-            self.base.get_decryption_key(
+        # Apple Music 4K MV streams always include both Widevine and PlayReady
+        # PSSH in the media playlist. However only PlayReady licenses are
+        # granted for HVC1 4K content — Widevine requests return status=-1021.
+        # Presence of playready_pssh on the video track is the definitive
+        # signal; use_playready (SL3000 flag) is kept as a secondary indicator.
+        video_uses_pr = bool(stream_info.video_track.playready_pssh)
+
+        logger.debug(
+            "playready_detection",
+            use_playready_flag=stream_info.video_track.use_playready,
+            has_widevine_pssh=bool(stream_info.video_track.widevine_pssh),
+            has_playready_pssh=bool(stream_info.video_track.playready_pssh),
+            video_uses_pr=video_uses_pr,
+        )
+
+        if video_uses_pr:
+            logger.debug(
+                "get_decryption_key_playready",
+                media_id=stream_info.media_id,
+            )
+            decryption_key_video = await self._get_playready_key_subprocess(
+                stream_info.media_id,
+                stream_info.video_track.playready_pssh,
+            )
+        else:
+            decryption_key_video = await self.base.get_decryption_key(
                 stream_info.video_track.widevine_pssh,
                 stream_info.media_id,
-            ),
-            self.base.get_decryption_key(
-                stream_info.audio_track.widevine_pssh,
-                stream_info.media_id,
-            ),
+            )
+
+        decryption_key_audio = await self.base.get_decryption_key(
+            stream_info.audio_track.widevine_pssh,
+            stream_info.media_id,
         )
 
         return DecryptionKeyAv(
             video_track=decryption_key_video,
             audio_track=decryption_key_audio,
         )
+
+    async def _get_playready_key_subprocess(
+        self,
+        adam_id: str,
+        playready_pssh_uri: str,
+    ) -> DecryptionKey:
+        """Obtain a PlayReady content key via the prkey binary.
+
+        prkey uses puppyready (Go) to generate a PlayReady challenge,
+        exchanges it with wrapper-lite at /license?drm-type=pr,
+        and prints kid:key (hex) to stdout.
+
+        Build prkey from the prkey-standalone source directory:
+            GOOS=android GOARCH=arm64 go build -o ~/prkey .
+            cp ~/prkey $PREFIX/bin/prkey
+        """
+        import shutil
+
+        prkey_path = shutil.which("prkey")
+        if not prkey_path:
+            raise RuntimeError(
+                "prkey binary not found in PATH. "
+                "Build from prkey-standalone/ with: "
+                "GOOS=android GOARCH=arm64 go build -o prkey . "
+                "then copy to $PREFIX/bin/"
+            )
+
+        proc = await asyncio.create_subprocess_exec(
+            prkey_path,
+            "-adam-id",    adam_id,
+            "-pssh",       playready_pssh_uri,
+            "-lite-server", self.base.wrapper_url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"prkey failed (exit {proc.returncode}): "
+                f"{stderr.decode(errors='replace').strip()}"
+            )
+
+        output = stdout.decode().strip()
+        if ":" not in output:
+            raise RuntimeError(f"prkey unexpected output: {output!r}")
+
+        kid, key = output.split(":", 1)
+        return DecryptionKey(kid=kid, key=key)
 
     async def get_media(
         self,
