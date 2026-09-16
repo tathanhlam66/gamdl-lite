@@ -383,6 +383,14 @@ class CliConfig:
             default=base_downloader_sig.parameters["mp4box_path"].default,
         ),
     ]
+    ccextractor_path: Annotated[
+        str,
+        option(
+            "--ccextractor-path",
+            help="ccextractor executable path (used for --save-cc)",
+            default=base_downloader_sig.parameters["ccextractor_path"].default,
+        ),
+    ]
     download_mode: Annotated[
         DownloadMode,
         option(
@@ -517,6 +525,18 @@ class CliConfig:
             "--save-cover",
             "-s",
             help="Save cover as separate file",
+            is_flag=True,
+        ),
+    ]
+    save_cc: Annotated[
+        bool,
+        option(
+            "--save-cc",
+            help=(
+                "Extract closed captions from music videos to a separate .srt file. "
+                "Only applies when remux mode is ffmpeg (mp4box preserves CC in-container)."
+            ),
+            default=music_video_downloader_sig.parameters["save_cc"].default,
             is_flag=True,
         ),
     ]

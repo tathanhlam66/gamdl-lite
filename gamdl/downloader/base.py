@@ -210,6 +210,7 @@ class AppleMusicBaseDownloader:
         mp4decrypt_path: str = "mp4decrypt",
         ffmpeg_path: str = "ffmpeg",
         mp4box_path: str = "MP4Box",
+        ccextractor_path: str = "ccextractor",
         wrapper_url: str = "http://127.0.0.1:12340",
         download_mode: DownloadMode = DownloadMode.YTDLP,
         album_folder_template: str = "{album_artist}/{album}",
@@ -233,6 +234,7 @@ class AppleMusicBaseDownloader:
         self.mp4decrypt_path = mp4decrypt_path
         self.ffmpeg_path = ffmpeg_path
         self.mp4box_path = mp4box_path
+        self.ccextractor_path = ccextractor_path
         self.wrapper_url = wrapper_url
         self.download_mode = download_mode
         self.album_folder_template = album_folder_template
@@ -264,6 +266,7 @@ class AppleMusicBaseDownloader:
         self.full_mp4decrypt_path = shutil.which(self.mp4decrypt_path)
         self.full_ffmpeg_path = shutil.which(self.ffmpeg_path)
         self.full_mp4box_path = shutil.which(self.mp4box_path)
+        self.full_ccextractor_path = shutil.which(self.ccextractor_path)
 
         log = log.debug(
             "success",
@@ -271,6 +274,7 @@ class AppleMusicBaseDownloader:
             full_mp4decrypt_path=self.full_mp4decrypt_path,
             full_ffmpeg_path=self.full_ffmpeg_path,
             full_mp4box_path=self.full_mp4box_path,
+            full_ccextractor_path=self.full_ccextractor_path,
         )
 
     def get_temp_path(

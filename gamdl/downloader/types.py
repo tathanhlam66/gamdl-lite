@@ -13,3 +13,4 @@ class DownloadItem:
     playlist_file_path: str = None
     synced_lyrics_path: str = None
     cover_path: str = None
+    cc_path: str = None

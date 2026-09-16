@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import shutil
 from pathlib import Path
 
 from ..interface.enums import CoverFormat
@@ -21,24 +23,25 @@ class AppleMusicMusicVideoDownloader:
         base: AppleMusicBaseDownloader,
         remux_mode: RemuxMode = RemuxMode.FFMPEG,
         remux_format: RemuxFormatMusicVideo = RemuxFormatMusicVideo.M4V,
+        save_cc: bool = False,
     ):
         self.base = base
         self.remux_mode = remux_mode
         self.remux_format = remux_format
+        self.save_cc = save_cc
 
-    async def _probe_has_convertible_subtitles(self, input_path: str) -> bool:
+    async def _probe_subtitle_streams(self, input_path: str) -> list[dict]:
         """
-        Return True  → video has a subtitle stream that ffmpeg CAN transcode to mov_text.
-        Return False → no subtitle stream, or only untranscodable CC tracks (c608/c708).
+        Dùng ffprobe để lấy tất cả subtitle/CC streams trong file.
+        Trả về list stream dicts; rỗng nếu không có hoặc probe thất bại.
         """
-        ffprobe_path = self.base.full_ffmpeg_path
-        if ffprobe_path:
-            candidate = str(Path(ffprobe_path).parent / "ffprobe")
-            import shutil
+        ffprobe_path = None
+        if self.base.full_ffmpeg_path:
+            candidate = str(Path(self.base.full_ffmpeg_path).parent / "ffprobe")
             ffprobe_path = shutil.which(candidate) or shutil.which("ffprobe") or None
 
         if not ffprobe_path:
-            return False
+            return []
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -53,23 +56,72 @@ class AppleMusicMusicVideoDownloader:
             )
             stdout, _ = await proc.communicate()
             if proc.returncode != 0:
-                return False
-
+                return []
             info = json.loads(stdout.decode())
-            streams = info.get("streams", [])
-
-            if not streams:
-                return False
-
-            for s in streams:
-                codec = s.get("codec_name", "").lower()
-                if codec not in _UNTRANSCODABLE_SUBTITLE_CODECS:
-                    return True  # at least one convertible subtitle track exists
-
-            return False  # only untranscodable CC tracks found
-
+            return info.get("streams", [])
         except Exception:
-            return False  # probe failed → safe default
+            return []
+
+    async def _probe_has_convertible_subtitles(self, input_path: str) -> bool:
+        """
+        Return True  → video has a subtitle stream ffmpeg CAN transcode to mov_text.
+        Return False → no subtitle stream, or only untranscodable CC tracks (c608/c708).
+        """
+        streams = await self._probe_subtitle_streams(input_path)
+        return any(
+            s.get("codec_name", "").lower() not in _UNTRANSCODABLE_SUBTITLE_CODECS
+            for s in streams
+        )
+
+    async def _extract_cc(
+        self,
+        input_path_video: str,
+        output_path_cc: str,
+    ) -> bool:
+        """
+        Tách closed captions (c608/c708) ra file SRT bằng ccextractor.
+
+        ffmpeg không decode được c608/c708 track type (Apple clcp handler) —
+        chỉ ccextractor xử lý được. Probe trước để tránh chạy ccextractor
+        khi không có CC stream hoặc công cụ không tồn tại.
+
+        Trả về True nếu file SRT được tạo và có nội dung.
+        """
+        if not self.base.full_ccextractor_path:
+            return False
+
+        streams = await self._probe_subtitle_streams(input_path_video)
+        has_cc = any(
+            s.get("codec_name", "").lower() in _UNTRANSCODABLE_SUBTITLE_CODECS
+            for s in streams
+        )
+        if not has_cc:
+            # Không có CC track → bỏ qua
+            # (subtitle stream thông thường đã được _remux_ffmpeg xử lý)
+            return False
+
+        Path(output_path_cc).parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # ccextractor luôn in banner + progress dài, không có flag tắt.
+            # silent=True buộc async_subprocess pipe stdout/stderr; vẫn raise
+            # Exception kèm output nếu exit code != 0.
+            async with self.base.spinner("Extracting CC…"):
+                await async_subprocess(
+                    self.base.full_ccextractor_path,
+                    input_path_video,
+                    "-srt",
+                    "-o", output_path_cc,
+                    silent=True,
+                )
+        except Exception:
+            return False
+
+        return os.path.exists(output_path_cc) and os.path.getsize(output_path_cc) > 0
+
+    def get_cc_path(self, final_path: str) -> str:
+        """Output path cho CC file — cùng tên với video, đuôi .srt."""
+        return str(Path(final_path).with_suffix(".srt"))
 
     async def _remux_mp4box(
         self,
@@ -152,6 +204,7 @@ class AppleMusicMusicVideoDownloader:
         decrypted_path_audio: str,
         staged_path: str,
         decryption_key: DecryptionKeyAv,
+        cc_path: str | None = None,
     ):
         await self._decrypt_mp4decrypt(
             encrypted_path_video,
@@ -163,6 +216,13 @@ class AppleMusicMusicVideoDownloader:
             decrypted_path_audio,
             decryption_key.audio_track.key,
         )
+
+        # Tách CC từ decrypted video trước khi remux.
+        # Phải làm ở bước này vì decrypted_video còn nguyên vẹn;
+        # sau remux FFmpeg mất CC, MP4Box giữ trong container nhưng
+        # --save-cc yêu cầu file .srt riêng với cả hai mode.
+        if cc_path:
+            await self._extract_cc(decrypted_path_video, cc_path)
 
         if self.remux_mode == RemuxMode.MP4BOX:
             await self._remux_mp4box(
@@ -219,6 +279,9 @@ class AppleMusicMusicVideoDownloader:
             media.cover.file_extension,
         )
 
+        if self.save_cc:
+            download_item.cc_path = self.get_cc_path(download_item.final_path)
+
         return download_item
 
     async def download(
@@ -267,6 +330,7 @@ class AppleMusicMusicVideoDownloader:
             decrypted_path_audio,
             download_item.staged_path,
             download_item.media.decryption_key,
+            cc_path=download_item.cc_path,
         )
 
         cover_bytes = (
