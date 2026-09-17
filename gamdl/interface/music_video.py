@@ -98,15 +98,12 @@ class AppleMusicMusicVideoInterface:
     ) -> MediaTags:
         """Build MediaTags for a music video.
 
-        Sources (merged by priority — first wins):
-        - AMP catalog attributes   : sortName, sortArtistName, composerName,
-                                     contentRating, isrc, genreNames
-        - AMP album relationship   : sortName (album sort), isCompilation
-        - iTunes Lookup (musicVideo): artistName, artistId, trackCensoredName,
-                                      trackExplicitness, releaseDate, primaryGenreName,
-                                      collectionCensoredName, track/disc numbers,
-                                      shortDescription / longDescription (comment)
-        - iTunes Page (product-dv) : copyright, genres[0].genreId, collectionId
+        AMP is the authoritative source for all fields it provides.
+        iTunes Lookup (entity=musicVideo) only supplements fields AMP cannot provide:
+          - artistId                 — not exposed in AMP attributes
+          - comment                  — AMP editorialNotes primary, Lookup shortDescription fallback
+        iTunes Page (product-dv) provides:
+          - copyright, collectionId, genreId
         """
         log = logger.bind(
             action="get_music_video_tags",
@@ -149,28 +146,17 @@ class AppleMusicMusicVideoInterface:
         lk_mv    = lookup_results[0] if len(lookup_results) > 0 else {}
         lk_album = lookup_results[1] if len(lookup_results) > 1 else {}
 
-        # --- Rating -----------------------------------------------------------
-        explicitness = lk_mv.get("trackExplicitness", "")
-        if explicitness == "explicit":
+        # --- Rating: AMP contentRating is primary ----------------------------
+        cr = attr.get("contentRating", "")
+        if cr == "explicit":
             rating = MediaRating.EXPLICIT
-        elif explicitness == "cleaned":
+        elif cr == "clean":
             rating = MediaRating.CLEAN
         else:
-            # Fall back to AMP contentRating
-            cr = attr.get("contentRating", "")
-            if cr == "explicit":
-                rating = MediaRating.EXPLICIT
-            elif cr == "clean":
-                rating = MediaRating.CLEAN
-            else:
-                rating = MediaRating.NONE
+            rating = MediaRating.NONE
 
-        # --- Genre ------------------------------------------------------------
-        genre = (
-            lk_mv.get("primaryGenreName")
-            or (attr.get("genreNames") or [""])[0]
-            or None
-        )
+        # --- Genre: AMP genreNames is primary --------------------------------
+        genre = (attr.get("genreNames") or [""])[0] or None
         try:
             genre_id = int(itunes_page_metadata["genres"][0]["genreId"])
         except (KeyError, IndexError, TypeError, ValueError):
@@ -202,42 +188,44 @@ class AppleMusicMusicVideoInterface:
             or amp_album_attr.get("copyright")
         )
 
+        # artistId is only available from iTunes Lookup
+        artist_id = int(lk_mv["artistId"]) if lk_mv.get("artistId") else None
+
         tags = MediaTags(
-            artist=lk_mv.get("artistName") or attr.get("artistName", ""),
-            artist_id=int(lk_mv["artistId"]) if lk_mv.get("artistId") else None,
+            artist=attr.get("artistName", ""),
+            artist_id=artist_id,
             artist_sort=artist_sort,
             comment=comment,
             composer=composer,
             copyright=copyright_str,
-            date=self.base.parse_date(
-                lk_mv.get("releaseDate") or attr.get("releaseDate")
-            ),
+            date=self.base.parse_date(attr.get("releaseDate")),
             genre=genre,
             genre_id=genre_id,
             isrc=isrc,
             media_type=MediaType.MUSIC_VIDEO,
             rating=rating,
             storefront=self.base.itunes_api.storefront_id,
-            title=lk_mv.get("trackCensoredName") or attr.get("name", ""),
+            title=attr.get("name", ""),
             title_id=int(metadata["id"]),
             title_sort=title_sort,
         )
 
         # --- Album / collection tags (present only when MV belongs to one) ----
         collection_id = itunes_page_metadata.get("collectionId")
-        if lk_album and collection_id:
+        if collection_id:
             album_amp = await self.base.get_album_cached(str(collection_id))
             album_amp_attr: dict = album_amp["attributes"] if album_amp else {}
 
-            tags.album        = lk_album.get("collectionCensoredName") or amp_album_attr.get("name")
-            tags.album_artist = lk_album.get("artistName")             or amp_album_attr.get("artistName")
+            # AMP cached album is authoritative for all album fields
+            tags.album        = album_amp_attr.get("name") or amp_album_attr.get("name")
+            tags.album_artist = album_amp_attr.get("artistName") or amp_album_attr.get("artistName")
             tags.album_id     = int(collection_id)
-            tags.album_sort   = album_sort or album_amp_attr.get("sortName")
+            tags.album_sort   = album_amp_attr.get("sortName") or album_sort
             tags.compilation  = album_amp_attr.get("isCompilation", False)
-            tags.disc         = lk_mv.get("discNumber")  or 1
-            tags.disc_total   = lk_mv.get("discCount")   or 1
-            tags.track        = lk_mv.get("trackNumber") or 1
-            tags.track_total  = lk_mv.get("trackCount")  or 1
+            tags.disc         = attr.get("discNumber") or 1
+            tags.disc_total   = album_amp_attr.get("discCount") or 1
+            tags.track        = attr.get("trackNumber") or 1
+            tags.track_total  = album_amp_attr.get("trackCount") or 1
 
         log.debug("success", tags=tags)
 
@@ -591,11 +579,31 @@ class AppleMusicMusicVideoInterface:
         kid, key = output.split(":", 1)
         return DecryptionKey(kid=kid, key=key)
 
+    @staticmethod
+    def _has_albums_relationship(media_metadata: dict) -> bool:
+        """Return True only when the albums relationship is fully embedded.
+
+        A track stub coming from get_album() has no 'relationships' key at all
+        (or has one that lacks 'albums'), so get_tags() would receive an empty
+        amp_album_attr and lose album sort / compilation / copyright fields.
+        """
+        try:
+            data = media_metadata["relationships"]["albums"]["data"]
+            return bool(data) and "attributes" in data[0]
+        except (KeyError, IndexError, TypeError):
+            return False
+
     async def get_media(
         self,
         media: AppleMusicMedia,
     ) -> AsyncGenerator[AppleMusicMedia, None]:
-        if not media.media_metadata:
+        # Fetch full music video object (with include=albums) when:
+        #   - no metadata yet (music-video URL with no pre-fetch), OR
+        #   - metadata is a shallow track stub from get_album() that lacks the
+        #     albums relationship needed by get_tags()
+        if not media.media_metadata or not self._has_albums_relationship(
+            media.media_metadata
+        ):
             media.media_metadata = (
                 await self.base.apple_music_api.get_music_video(media.media_id)
             )["data"][0]

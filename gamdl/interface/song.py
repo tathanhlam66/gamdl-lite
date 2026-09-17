@@ -422,16 +422,13 @@ class AppleMusicSongInterface:
         """
         Build MediaTags from AMP catalog + iTunes Lookup API.
 
-        Sources (all public — no music_user_token needed):
-          - AMP song attributes  : name, sortName, sortArtistName, composerName,
-                                   trackNumber, discNumber, releaseDate, contentRating,
-                                   isCompilation, genreNames, durationInMillis
-          - AMP album relationship: albumName, sortName, artistName, copyright,
-                                    trackCount, discCount
-          - iTunes Lookup (entity=album): artistId, genreId, primaryGenreName,
-                                          trackExplicitness, discCount, trackCount,
-                                          collectionId, gapless, comments
-        Together these exactly match the fields available from Apple webPlayback.
+        AMP is the authoritative source for all fields it provides.
+        iTunes Lookup (entity=album) only supplements fields AMP cannot provide:
+          - artistId, genreId       — not exposed in AMP song/album attributes
+          - gapless, comment        — only available from iTunes Lookup
+          - compilation             — AMP isCompilation is primary; Lookup
+                                      collectionArtistId/collectionType used as
+                                      fallback when AMP album relationship is absent
         """
         log = logger.bind(action="get_song_tags_from_amp")
 
@@ -484,85 +481,85 @@ class AppleMusicSongInterface:
             except (TypeError, ValueError):
                 return default
 
-        title_id  = _int(song_id)
-        album_id  = _int(lk_song.get("collectionId") or lk_album.get("collectionId") or album_id_str)
-        artist_id = _int(lk_song.get("artistId")) or None
+        # --- AMP is the primary source for all fields it provides ---
 
-        # Use None (not 0) for missing genre_id; 0 writes an invalid geID atom.
-        _raw_genre_id = lk_song.get("primaryGenreId") or lk_album.get("primaryGenreId")
-        genre_id = _int(_raw_genre_id) if _raw_genre_id else None
+        title_id    = _int(song_id)
+        album_id    = _int(album_id_str or lk_song.get("collectionId") or lk_album.get("collectionId"))
 
-        sort_name   = attr.get("sortName")        or attr.get("name", "")
-        sort_artist = attr.get("sortArtistName")  or attr.get("artistName", "")
-        sort_album  = album_attr.get("sortName")  or album_attr.get("name", "")
+        sort_name     = attr.get("sortName")       or attr.get("name", "")
+        sort_artist   = attr.get("sortArtistName") or attr.get("artistName", "")
+        sort_album    = album_attr.get("sortName") or album_attr.get("name", "")
         sort_composer = attr.get("sortComposerName")
 
-        album_name   = (lk_song.get("collectionCensoredName")
-                        or album_attr.get("name", ""))
-        album_artist = (lk_album.get("artistName")
-                        or album_attr.get("artistName")
-                        or attr.get("artistName", ""))
+        album_name   = album_attr.get("name", "")
+        album_artist = album_attr.get("artistName") or attr.get("artistName", "")
 
-        disc       = _int(lk_song.get("discNumber")  or attr.get("discNumber"), 1)
-        disc_total = _int(lk_song.get("discCount")   or album_attr.get("discCount"), 1)
-        track      = _int(lk_song.get("trackNumber") or attr.get("trackNumber"), 1)
-        track_total = _int(lk_song.get("trackCount") or album_attr.get("trackCount"), 1)
+        disc        = _int(attr.get("discNumber"), 1)
+        disc_total  = _int(album_attr.get("discCount"), 1)
+        track       = _int(attr.get("trackNumber"), 1)
+        track_total = _int(album_attr.get("trackCount"), 1)
 
-        # iTunes Lookup: trackExplicitness = "explicit" | "cleaned" | "notExplicit"
-        explicitness = lk_song.get("trackExplicitness", "")
-        if explicitness == "explicit":
+        # AMP contentRating is the primary rating source
+        cr = attr.get("contentRating", "")
+        if cr == "explicit":
             rating = MediaRating.EXPLICIT
-        elif explicitness == "cleaned":
+        elif cr == "clean":
             rating = MediaRating.CLEAN
         else:
-            # Fallback to AMP contentRating
-            cr = attr.get("contentRating", "")
-            if cr == "explicit":
-                rating = MediaRating.EXPLICIT
-            elif cr == "clean":
-                rating = MediaRating.CLEAN
-            else:
-                rating = MediaRating.NONE
+            rating = MediaRating.NONE
 
-        genre = (lk_song.get("primaryGenreName")
-                 or (attr.get("genreNames") or [""])[0]
-                 or None)
+        genre = (attr.get("genreNames") or [""])[0] or None
 
-        # gapless/compilation/comments are only in iTunes Lookup, not AMP attributes
-        gapless     = bool(lk_song.get("trackTimeMillis") and lk_song.get("trackTimeMillis") != 0
-                           and lk_album.get("collectionType") == "Compilation")                       if not lk_song.get("gapless") else bool(lk_song.get("gapless"))
-        compilation = bool(lk_song.get("collectionArtistId")
-                           or album_attr.get("isCompilation")
-                           or lk_album.get("collectionType") == "Compilation")
-        comment     = lk_song.get("shortDescription") or lk_song.get("longDescription")
-
-        copyright_str = (album_attr.get("copyright")
-                         or lk_album.get("copyright"))
+        copyright_str = album_attr.get("copyright")
 
         if not self.use_album_date or not album_id_str:
             # date not yet resolved (no parallel fetch was done); resolve now.
-            album_id_for_date = _int(
-                lk_song.get("collectionId") or lk_album.get("collectionId") or album_id_str
-            )
+            album_id_for_date = _int(album_id_str)
             if self.use_album_date and album_id_for_date and not date:
                 date = await self.base.get_media_date(str(album_id_for_date))
             else:
-                release_date_str = (lk_song.get("releaseDate")
-                                    or attr.get("releaseDate"))
+                release_date_str = attr.get("releaseDate")
                 date = self.base.parse_date(release_date_str) if release_date_str else None
 
-        composer    = attr.get("composerName") or lk_song.get("composerName")
+        composer    = attr.get("composerName")
         composer_id = None  # not in AMP or iTunes Lookup for songs
 
         # xid is webplayback-only; ISRC is stable standard ID from AMP attributes.
         isrc = attr.get("isrc") or None
+
+        # --- iTunes Lookup only supplements fields AMP cannot provide ---
+
+        # artistId and genreId are not in AMP song/album attributes
+        artist_id = _int(lk_song.get("artistId")) or None
+        _raw_genre_id = lk_song.get("primaryGenreId") or lk_album.get("primaryGenreId")
+        genre_id = _int(_raw_genre_id) if _raw_genre_id else None
+
+        # gapless and comment are only available from iTunes Lookup
+        gapless = (
+            bool(lk_song.get("gapless"))
+            if lk_song.get("gapless")
+            else bool(
+                lk_song.get("trackTimeMillis")
+                and lk_song.get("trackTimeMillis") != 0
+                and lk_album.get("collectionType") == "Compilation"
+            )
+        )
+        comment = lk_song.get("shortDescription") or lk_song.get("longDescription")
+
+        # compilation: AMP isCompilation is the primary signal; Lookup collectionArtistId
+        # and collectionType supplement when AMP album relationship is absent
+        compilation = bool(
+            album_attr.get("isCompilation")
+            or lk_song.get("collectionArtistId")
+            or lk_album.get("collectionType") == "Compilation"
+        )
 
         tags = MediaTags(
             album=album_name,
             album_artist=album_artist,
             album_id=album_id,
             album_sort=sort_album,
-            artist=lk_song.get("artistName") or attr.get("artistName", ""),
+            artist=attr.get("artistName", ""),
             artist_id=artist_id,
             artist_sort=sort_artist,
             comment=comment,
@@ -582,7 +579,7 @@ class AppleMusicSongInterface:
             media_type=MediaType.SONG,
             rating=rating,
             storefront=self.base.itunes_api.storefront_id,
-            title=lk_song.get("trackCensoredName") or attr.get("name", ""),
+            title=attr.get("name", ""),
             title_id=title_id,
             title_sort=sort_name,
             track=track,
@@ -827,11 +824,32 @@ class AppleMusicSongInterface:
 
         return stream_info_av
 
+    @staticmethod
+    def _has_albums_relationship(media_metadata: dict) -> bool:
+        """Return True only when the albums relationship is fully embedded.
+
+        A track stub coming from get_album() has no 'relationships' key at all
+        (or has one that lacks 'albums'), so get_tags_from_amp() would receive
+        an empty album_attr and write an empty album name, causing the file to
+        land in artist/Unknown Album instead of artist/<album>.
+        """
+        try:
+            data = media_metadata["relationships"]["albums"]["data"]
+            return bool(data) and "attributes" in data[0]
+        except (KeyError, IndexError, TypeError):
+            return False
+
     async def get_media(
         self,
         media: AppleMusicMedia,
     ) -> AsyncGenerator[AppleMusicMedia, None]:
-        if not media.media_metadata:
+        # Fetch full song object (with include=lyrics,albums) when:
+        #   - no metadata yet (song URL with no pre-fetch), OR
+        #   - metadata is a shallow track stub from get_album() that lacks the
+        #     albums relationship needed by get_tags_from_amp()
+        if not media.media_metadata or not self._has_albums_relationship(
+            media.media_metadata
+        ):
             media.media_metadata = (
                 await self.base.apple_music_api.get_song(media.media_id)
             )["data"][0]
