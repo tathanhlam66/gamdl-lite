@@ -35,6 +35,7 @@ class AppleMusicInterface:
         flat_filter_function: Callable[[dict], Any] | None = None,
         concurrency: int = 1,
         disallowed_media_types: list[str] | None = None,
+        use_url_storefront: bool = False,
     ) -> None:
         self.song = song
         self.music_video = music_video
@@ -44,6 +45,7 @@ class AppleMusicInterface:
         self.flat_filter_function = flat_filter_function
         self.concurrency = concurrency
         self.disallowed_media_types = disallowed_media_types
+        self.use_url_storefront = use_url_storefront
 
         self.base = song.base
 
@@ -425,44 +427,66 @@ class AppleMusicInterface:
                 url_info.type,
             )
 
-        if url_info.type == "song" or url_info.sub_id:
-            async for media in self._get_song_media(
-                media_id=url_info.sub_id or url_info.id,
-                index=0,
-                total=1,
-            ):
-                yield media
+        # When --url-storefront is active and the URL carries a two-letter
+        # storefront code, temporarily redirect all AMP catalog requests to
+        # that storefront so the returned metadata matches the URL's region.
+        url_sf = url_info.storefront or url_info.library_storefront
+        storefront_ctx = (
+            self.base.apple_music_api.with_storefront(url_sf)
+            if self.use_url_storefront and url_sf
+            else None
+        )
 
-        elif url_info.type == "music-video":
-            async for media in self._get_music_video_media(
-                media_id=url_info.id,
-                index=0,
-                total=1,
-            ):
-                yield media
+        def _ctx_enter():
+            if storefront_ctx is not None:
+                storefront_ctx.__enter__()
 
-        elif url_info.type == "album" or url_info.library_type == "albums":
-            async for media in self._get_album_media(
-                media_id=url_info.library_id or url_info.id,
-                is_library=bool(url_info.library_type),
-            ):
-                yield media
+        def _ctx_exit():
+            if storefront_ctx is not None:
+                storefront_ctx.__exit__(None, None, None)
 
-        elif url_info.type == "playlist" or url_info.library_type == "playlist":
-            async for media in self._get_playlist_media(
-                media_id=url_info.library_id or url_info.id,
-                is_library=bool(url_info.library_type),
-            ):
-                yield media
+        _ctx_enter()
+        try:
+            if url_info.type == "song" or url_info.sub_id:
+                async for media in self._get_song_media(
+                    media_id=url_info.sub_id or url_info.id,
+                    index=0,
+                    total=1,
+                ):
+                    yield media
 
-        elif url_info.type == "post":
-            async for media in self._get_uploaded_video_media(
-                media_id=url_info.id,
-            ):
-                yield media
+            elif url_info.type == "music-video":
+                async for media in self._get_music_video_media(
+                    media_id=url_info.id,
+                    index=0,
+                    total=1,
+                ):
+                    yield media
 
-        elif url_info.type == "artist":
-            async for media in self._get_artist_media(
-                media_id=url_info.id,
-            ):
-                yield media
+            elif url_info.type == "album" or url_info.library_type == "albums":
+                async for media in self._get_album_media(
+                    media_id=url_info.library_id or url_info.id,
+                    is_library=bool(url_info.library_type),
+                ):
+                    yield media
+
+            elif url_info.type == "playlist" or url_info.library_type == "playlist":
+                async for media in self._get_playlist_media(
+                    media_id=url_info.library_id or url_info.id,
+                    is_library=bool(url_info.library_type),
+                ):
+                    yield media
+
+            elif url_info.type == "post":
+                async for media in self._get_uploaded_video_media(
+                    media_id=url_info.id,
+                ):
+                    yield media
+
+            elif url_info.type == "artist":
+                async for media in self._get_artist_media(
+                    media_id=url_info.id,
+                ):
+                    yield media
+        finally:
+            _ctx_exit()

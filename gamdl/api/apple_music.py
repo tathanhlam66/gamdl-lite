@@ -45,6 +45,31 @@ class AppleMusicApi:
         self.account_info = account_info
         self.client = client
 
+    def with_storefront(self, storefront: str) -> "AppleMusicApi":
+        """Return a lightweight proxy that overrides ``self.storefront`` for
+        the duration of one logical request batch (e.g. a single URL).
+
+        Usage::
+
+            async with api.with_storefront("us") as sf_api:
+                song = await sf_api.get_song(song_id)
+
+        The proxy shares the same underlying HTTP client and token so no
+        extra connection or auth overhead is incurred.
+        """
+        import contextlib
+
+        @contextlib.contextmanager
+        def _ctx():
+            original = self.storefront
+            self.storefront = storefront
+            try:
+                yield self
+            finally:
+                self.storefront = original
+
+        return _ctx()
+
     @property
     def active_subscription(self) -> bool:
         # In wrapper mode, account_info is None but subscription is guaranteed active
@@ -330,11 +355,18 @@ class AppleMusicApi:
         uri: str,
         params: dict | None = None,
     ) -> dict:
+        # Always include the locale so AMP returns metadata in the requested
+        # language instead of the language tied to the device / storefront.
+        # Callers may still override by passing their own "l" key in params.
+        merged_params: dict = {"l": self.language}
+        if params:
+            merged_params.update(params)
+
         response = None
         try:
             response = await self.client.get(
                 APPLE_MUSIC_AMP_API_URL + uri,
-                params=params,
+                params=merged_params,
             )
             response.raise_for_status()
             response_json = response.json()

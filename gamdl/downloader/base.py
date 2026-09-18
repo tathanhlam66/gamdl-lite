@@ -226,6 +226,9 @@ class AppleMusicBaseDownloader:
         truncate: int = None,
         silent: bool = False,
         embed_synced_lyrics: bool = False,
+        ytdlp_concurrent_fragments: int = 1,
+        ytdlp_buffer_size: int = 1024 * 16,
+        ytdlp_http_chunk_size: int = 0,
     ):
         self.interface = interface
         self.output_path = output_path
@@ -250,6 +253,9 @@ class AppleMusicBaseDownloader:
         self.truncate = truncate
         self.silent = silent
         self.embed_synced_lyrics = embed_synced_lyrics
+        self.ytdlp_concurrent_fragments = ytdlp_concurrent_fragments
+        self.ytdlp_buffer_size = ytdlp_buffer_size
+        self.ytdlp_http_chunk_size = ytdlp_http_chunk_size
 
         self._initialize_binary_paths()
 
@@ -431,6 +437,9 @@ class AppleMusicBaseDownloader:
             "fixup": "never",
             "noprogress": self.silent,
             "allowed_extractors": ["generic"],
+            "concurrent_fragment_downloads": self.ytdlp_concurrent_fragments,
+            "buffersize": self.ytdlp_buffer_size,
+            **({"http_chunk_size": self.ytdlp_http_chunk_size} if self.ytdlp_http_chunk_size > 0 else {}),
         }
 
         if on_termux:

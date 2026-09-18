@@ -176,6 +176,7 @@ async def main(config: CliConfig):
         artist_select_media_type_function=interactive_prompts.ask_artist_media_type,
         artist_select_items_function=interactive_prompts.ask_artist_select_items,
         flat_filter_function=flat_filter,
+        use_url_storefront=config.use_url_storefront,
     )
 
     base_downloader = AppleMusicBaseDownloader(
@@ -201,6 +202,9 @@ async def main(config: CliConfig):
         exclude_tags=config.exclude_tags,
         truncate=config.truncate,
         embed_synced_lyrics=config.embed_synced_lyrics,
+        ytdlp_concurrent_fragments=config.ytdlp_concurrent_fragments,
+        ytdlp_buffer_size=config.ytdlp_buffer_size,
+        ytdlp_http_chunk_size=config.ytdlp_http_chunk_size,
     )
 
     song_downloader = AppleMusicSongDownloader(

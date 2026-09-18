@@ -49,13 +49,43 @@ class AppleMusicMusicVideoInterface:
     async def get_itunes_page_metadata(
         self,
         music_video_metadata: dict,
-    ) -> dict:
+    ) -> dict | None:
+        log = logger.bind(action="get_itunes_page_metadata")
+
         url_media_id = self.base.parse_media_id_from_url(music_video_metadata)
-        itunes_page = await self.base.itunes_api.get_itunes_page(
-            "music-video",
-            url_media_id,
+        try:
+            itunes_page = await self.base.itunes_api.get_itunes_page(
+                "music-video",
+                url_media_id,
+            )
+        except Exception as exc:
+            log.debug("itunes_page_fetch_failed", error=str(exc))
+            return None
+
+        results: dict = (
+            itunes_page
+            .get("storePlatformData", {})
+            .get("product-dv", {})
+            .get("results", {})
         )
-        return itunes_page["storePlatformData"]["product-dv"]["results"][url_media_id]
+
+        if not results:
+            log.debug("itunes_page_no_results", url_media_id=url_media_id)
+            return None
+
+        # Primary: exact key match
+        if url_media_id in results:
+            return results[url_media_id]
+
+        # Fallback: the page returned data but under a different ID
+        # (e.g. catalogId != URL id, or storefront redirect).
+        first_value = next(iter(results.values()))
+        log.debug(
+            "itunes_page_id_mismatch_using_first",
+            url_media_id=url_media_id,
+            found_ids=list(results.keys()),
+        )
+        return first_value
 
     def _get_m3u8_master_url_from_webplayback(self, webplayback: dict) -> str:
         m3u8_master_url = webplayback["hls-playlist-url"]
@@ -94,7 +124,7 @@ class AppleMusicMusicVideoInterface:
     async def get_tags(
         self,
         metadata: dict,
-        itunes_page_metadata: dict,
+        itunes_page_metadata: dict | None,
     ) -> MediaTags:
         """Build MediaTags for a music video.
 
@@ -158,7 +188,7 @@ class AppleMusicMusicVideoInterface:
         # --- Genre: AMP genreNames is primary --------------------------------
         genre = (attr.get("genreNames") or [""])[0] or None
         try:
-            genre_id = int(itunes_page_metadata["genres"][0]["genreId"])
+            genre_id = int(itunes_page_metadata["genres"][0]["genreId"]) if itunes_page_metadata else None
         except (KeyError, IndexError, TypeError, ValueError):
             genre_id = None
 
@@ -184,7 +214,7 @@ class AppleMusicMusicVideoInterface:
 
         # --- Copyright (iTunes Page primary, AMP album fallback) --------------
         copyright_str = (
-            itunes_page_metadata.get("copyright")
+            (itunes_page_metadata.get("copyright") if itunes_page_metadata else None)
             or amp_album_attr.get("copyright")
         )
 
@@ -211,7 +241,7 @@ class AppleMusicMusicVideoInterface:
         )
 
         # --- Album / collection tags (present only when MV belongs to one) ----
-        collection_id = itunes_page_metadata.get("collectionId")
+        collection_id = itunes_page_metadata.get("collectionId") if itunes_page_metadata else None
         if collection_id:
             album_amp = await self.base.get_album_cached(str(collection_id))
             album_amp_attr: dict = album_amp["attributes"] if album_amp else {}
@@ -234,7 +264,7 @@ class AppleMusicMusicVideoInterface:
     async def get_stream_info(
         self,
         metadata: dict,
-        itunes_page_metadata: dict,
+        itunes_page_metadata: dict | None,
     ) -> StreamInfoAv | None:
         log = logger.bind(
             action="get_music_video_stream_info",
@@ -244,7 +274,7 @@ class AppleMusicMusicVideoInterface:
         url_media_id = self.base.parse_media_id_from_url(metadata)
         m3u8_master_url = None
 
-        if url_media_id == metadata["id"]:
+        if itunes_page_metadata is not None and url_media_id == metadata["id"]:
             m3u8_master_url = self._get_m3u8_master_url_from_itunes_page_metadata(
                 itunes_page_metadata,
             )

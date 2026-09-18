@@ -251,6 +251,21 @@ class CliConfig:
             default=base_interface_create_sig.parameters["wrapper_url"].default,
         ),
     ]
+    use_url_storefront: Annotated[
+        bool,
+        option(
+            "--url-storefront",
+            help=(
+                "Use the storefront extracted from each Apple Music URL "
+                "(e.g. /us/ → 'us') as the AMP catalog storefront for that request. "
+                "This lets --language pick from the languages supported by that "
+                "storefront instead of the wrapper device's region. "
+                "Example: URL .../us/... with --language en-US gives English metadata "
+                "regardless of what country the wrapper device is in."
+            ),
+            is_flag=True,
+        ),
+    ]
     # Song Interface Options
     synced_lyrics_format: Annotated[
         SyncedLyricsFormat,
@@ -398,6 +413,42 @@ class CliConfig:
             help="Download mode",
             default=base_downloader_sig.parameters["download_mode"].default,
             type=DownloadMode,
+        ),
+    ]
+    ytdlp_concurrent_fragments: Annotated[
+        int,
+        option(
+            "--ytdlp-concurrent-fragments",
+            help=(
+                "Number of fragments to download concurrently when using yt-dlp "
+                "(HLS/DASH streams). Higher values speed up downloads on fast connections. "
+                "Recommended: 4–16. Has no effect on nm3u8dlre mode."
+            ),
+            default=base_downloader_sig.parameters["ytdlp_concurrent_fragments"].default,
+        ),
+    ]
+    ytdlp_buffer_size: Annotated[
+        int,
+        option(
+            "--ytdlp-buffer-size",
+            help=(
+                "yt-dlp download buffer size in bytes. "
+                "Default is 16 384 (16 KB). Increasing to 65 536–1 048 576 "
+                "can reduce CPU overhead on fast connections."
+            ),
+            default=base_downloader_sig.parameters["ytdlp_buffer_size"].default,
+        ),
+    ]
+    ytdlp_http_chunk_size: Annotated[
+        int,
+        option(
+            "--ytdlp-http-chunk-size",
+            help=(
+                "Size of each HTTP range-request chunk in bytes for yt-dlp. "
+                "0 disables chunked downloading (default). "
+                "Try 10485760 (10 MB) to work around throttling on some CDNs."
+            ),
+            default=base_downloader_sig.parameters["ytdlp_http_chunk_size"].default,
         ),
     ]
     album_folder_template: Annotated[

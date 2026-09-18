@@ -136,6 +136,7 @@ The file is created automatically on first run. Command-line arguments override 
 | `--cookies-path`, `-c`          | Cookies file path                                                 | `./cookies.txt`                                |
 | `--wrapper-url`                 | Wrapper-lite base URL                                             | `http://127.0.0.1:12340`                       |
 | `--language`, `-l`              | Metadata language                                                 | `en-US`                                        |
+| `--url-storefront`              | Use the storefront from each URL for AMP catalog requests         | `false`                                        |
 | **Output Options**              |                                                                   |                                                |
 | `--cover-format`                | Cover format                                                      | `jpg`                                          |
 | `--cover-size`                  | Cover size in pixels                                              | `1200`                                         |
@@ -153,6 +154,7 @@ The file is created automatically on first run. Command-line arguments override 
 | `--music-video-codec-priority`  | Comma-separated codec priority                                    | `h264,h265`                                    |
 | `--music-video-remux-mode`      | Remux mode                                                        | `ffmpeg`                                       |
 | `--music-video-remux-format`    | Music video remux format                                          | `m4v`                                          |
+| `--save-cc`                     | Extract closed captions to a separate `.srt` file                 | `false`                                        |
 | **Post Video Options**          |                                                                   |                                                |
 | `--uploaded-video-quality`      | Post video quality                                                | `best`                                         |
 | **Download & Path Options**     |                                                                   |                                                |
@@ -162,8 +164,12 @@ The file is created automatically on first run. Command-line arguments override 
 | `--mp4decrypt-path`             | mp4decrypt executable path                                        | `mp4decrypt`                                   |
 | `--ffmpeg-path`                 | FFmpeg executable path                                            | `ffmpeg`                                       |
 | `--mp4box-path`                 | MP4Box executable path                                            | `MP4Box`                                       |
+| `--ccextractor-path`            | ccextractor executable path (used with `--save-cc`)               | `ccextractor`                                  |
 | `--use-wrapper`                 | Use wrapper for decrypting songs                                  | `false`                                        |
 | `--download-mode`               | Download mode                                                     | `ytdlp`                                        |
+| `--ytdlp-concurrent-fragments`  | Number of fragments to download in parallel (yt-dlp HLS/DASH)     | `1`                                            |
+| `--ytdlp-buffer-size`           | yt-dlp download buffer size in bytes                              | `16384`                                        |
+| `--ytdlp-http-chunk-size`       | HTTP range-request chunk size in bytes (`0` = disabled)           | `0`                                            |
 | **Template Options**            |                                                                   |                                                |
 | `--album-folder-template`       | Album folder template                                             | `{album_artist}/{album}`                       |
 | `--compilation-folder-template` | Compilation folder template                                       | `Compilations/{album}`                         |
