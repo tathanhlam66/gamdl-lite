@@ -422,13 +422,14 @@ class AppleMusicSongInterface:
         """
         Build MediaTags from AMP catalog + iTunes Lookup API.
 
-        AMP is the authoritative source for all fields it provides.
-        iTunes Lookup (entity=album) only supplements fields AMP cannot provide:
-          - artistId, genreId       — not exposed in AMP song/album attributes
-          - gapless, comment        — only available from iTunes Lookup
-          - compilation             — AMP isCompilation is primary; Lookup
-                                      collectionArtistId/collectionType used as
-                                      fallback when AMP album relationship is absent
+        AMP is the authoritative source for most fields it provides.
+        iTunes Lookup (entity=album) supplements or overrides in these cases:
+          - date (releaseDate)  — Lookup is preferred; AMP is the fallback
+          - artistId, genreId   — not exposed in AMP song/album attributes
+          - gapless, comment    — only available from iTunes Lookup
+          - compilation         — AMP isCompilation is primary; Lookup
+                                  collectionArtistId/collectionType used as
+                                  fallback when AMP album relationship is absent
         """
         log = logger.bind(action="get_song_tags_from_amp")
 
@@ -518,7 +519,14 @@ class AppleMusicSongInterface:
             if self.use_album_date and album_id_for_date and not date:
                 date = await self.base.get_media_date(str(album_id_for_date))
             else:
-                release_date_str = attr.get("releaseDate")
+                # Prefer iTunes Lookup releaseDate — it is the canonical release
+                # date for the track and is not normalised the way AMP's
+                # releaseDate sometimes is.  Fall back to AMP only when the
+                # Lookup call returned no result (e.g. track not in store).
+                release_date_str = (
+                    lk_song.get("releaseDate")
+                    or attr.get("releaseDate")
+                )
                 date = self.base.parse_date(release_date_str) if release_date_str else None
 
         composer    = attr.get("composerName")

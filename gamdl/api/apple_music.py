@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import re
 from http.cookiejar import MozillaCookieJar
 from urllib.parse import parse_qs, urlparse
@@ -46,27 +48,40 @@ class AppleMusicApi:
         self.client = client
 
     def with_storefront(self, storefront: str) -> "AppleMusicApi":
-        """Return a lightweight proxy that overrides ``self.storefront`` for
-        the duration of one logical request batch (e.g. a single URL).
+        """Return a context manager that temporarily overrides ``self.storefront``
+        for the duration of one logical request batch (e.g. a single URL).
+
+        Also syncs the paired ``ItunesApi`` instance (when available via
+        ``_itunes_api``) so that iTunes Lookup calls use the same country code
+        as the AMP catalog requests.  Without this, tags built from
+        ``get_tags_from_amp()`` would fetch ``collectionId`` / ``artistId``
+        from the wrong storefront, causing ``album_id`` (plID) to be missing.
 
         Usage::
 
-            async with api.with_storefront("us") as sf_api:
-                song = await sf_api.get_song(song_id)
+            with api.with_storefront("gb"):
+                song = await api.get_song(song_id)
 
         The proxy shares the same underlying HTTP client and token so no
         extra connection or auth overhead is incurred.
         """
-        import contextlib
-
         @contextlib.contextmanager
         def _ctx():
-            original = self.storefront
+            original_amp = self.storefront
             self.storefront = storefront
+
+            # Keep ItunesApi in sync so iTunes Lookup uses the right country.
+            itunes_api = getattr(self, "_itunes_api", None)
+            original_itunes = itunes_api.storefront if itunes_api else None
+            if itunes_api:
+                itunes_api.storefront = storefront
+
             try:
                 yield self
             finally:
-                self.storefront = original
+                self.storefront = original_amp
+                if itunes_api:
+                    itunes_api.storefront = original_itunes
 
         return _ctx()
 

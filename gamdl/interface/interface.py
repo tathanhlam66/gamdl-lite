@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import nullcontext
 from typing import Any, AsyncGenerator, Callable
 
 import structlog
@@ -428,8 +429,13 @@ class AppleMusicInterface:
             )
 
         # When --url-storefront is active and the URL carries a two-letter
-        # storefront code, temporarily redirect all AMP catalog requests to
-        # that storefront so the returned metadata matches the URL's region.
+        # storefront code, temporarily redirect all AMP catalog requests AND
+        # iTunes Lookup calls to that storefront so every piece of metadata
+        # (including album_id / plID) is resolved for the correct region.
+        # with_storefront() keeps AppleMusicApi and its paired ItunesApi in
+        # sync, so get_tags_from_amp() sees consistent data throughout the
+        # entire song.get_media() call — including the second yield where tags
+        # are built from the fully-fetched AMP response.
         url_sf = url_info.storefront or url_info.library_storefront
         storefront_ctx = (
             self.base.apple_music_api.with_storefront(url_sf)
@@ -437,16 +443,7 @@ class AppleMusicInterface:
             else None
         )
 
-        def _ctx_enter():
-            if storefront_ctx is not None:
-                storefront_ctx.__enter__()
-
-        def _ctx_exit():
-            if storefront_ctx is not None:
-                storefront_ctx.__exit__(None, None, None)
-
-        _ctx_enter()
-        try:
+        with storefront_ctx if storefront_ctx is not None else nullcontext():
             if url_info.type == "song" or url_info.sub_id:
                 async for media in self._get_song_media(
                     media_id=url_info.sub_id or url_info.id,
@@ -488,5 +485,3 @@ class AppleMusicInterface:
                     media_id=url_info.id,
                 ):
                     yield media
-        finally:
-            _ctx_exit()
