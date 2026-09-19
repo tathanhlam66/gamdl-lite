@@ -142,12 +142,6 @@ class AppleMusicBaseInterface:
         )
         cdm = cls.create_cdm(wvd_path)
 
-        # Give AppleMusicApi a reference to ItunesApi so that
-        # with_storefront() can keep both in sync when --url-storefront
-        # redirects AMP catalog requests to a different region.  The
-        # attribute name is private-by-convention to avoid collisions.
-        apple_music_api._itunes_api = itunes_api
-
         base = cls(
             apple_music_api=apple_music_api,
             itunes_api=itunes_api,

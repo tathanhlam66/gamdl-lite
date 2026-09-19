@@ -189,8 +189,6 @@ class AppleMusicMusicVideoDownloader:
         async with self.base.spinner("Decrypting…"):
             await async_subprocess(
                 self.base.full_mp4decrypt_path,
-                "--method",
-                "MPEG-CENC",
                 "--key",
                 f"1:{decryption_key}",
                 input_path,
