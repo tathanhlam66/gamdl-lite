@@ -119,11 +119,11 @@ class AppleMusicDownloader:
             ("../" * (playlist_file_path_parent_parts_len - output_path_parts_len)),
             *final_path_obj.parts[output_path_parts_len:],
         )
-        playlist_file_lines = (
-            playlist_file_path_obj.open("r", encoding="utf8").readlines()
-            if playlist_file_path_obj.exists()
-            else []
-        )
+        if playlist_file_path_obj.exists():
+            with playlist_file_path_obj.open("r", encoding="utf8") as f:
+                playlist_file_lines = f.readlines()
+        else:
+            playlist_file_lines = []
         if len(playlist_file_lines) < playlist_track:
             playlist_file_lines.extend(
                 "\n" for _ in range(playlist_track - len(playlist_file_lines))

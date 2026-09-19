@@ -96,16 +96,16 @@ class AppleMusicMusicVideoDownloader:
             for s in streams
         )
         if not has_cc:
-            # Không có CC track → bỏ qua
-            # (subtitle stream thông thường đã được _remux_ffmpeg xử lý)
+            # No CC track — skip.
+            # (regular subtitle streams are already handled by _remux_ffmpeg)
             return False
 
         Path(output_path_cc).parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            # ccextractor luôn in banner + progress dài, không có flag tắt.
-            # silent=True buộc async_subprocess pipe stdout/stderr; vẫn raise
-            # Exception kèm output nếu exit code != 0.
+            # ccextractor always prints a long banner + progress with no flag to suppress it.
+            # silent=True forces async_subprocess to pipe stdout/stderr; it still raises
+            # an exception with the output if the exit code is non-zero.
             async with self.base.spinner("Extracting CC…"):
                 await async_subprocess(
                     self.base.full_ccextractor_path,
@@ -217,10 +217,10 @@ class AppleMusicMusicVideoDownloader:
             decryption_key.audio_track.key,
         )
 
-        # Tách CC từ decrypted video trước khi remux.
-        # Phải làm ở bước này vì decrypted_video còn nguyên vẹn;
-        # sau remux FFmpeg mất CC, MP4Box giữ trong container nhưng
-        # --save-cc yêu cầu file .srt riêng với cả hai mode.
+        # Extract CC from the decrypted video before remuxing.
+        # Must happen here while the decrypted video is still intact:
+        # FFmpeg loses CC after remux; MP4Box preserves them in-container,
+        # but --save-cc requires a separate .srt file for both modes.
         if cc_path:
             await self._extract_cc(decrypted_path_video, cc_path)
 

@@ -274,7 +274,7 @@ class AppleMusicBaseDownloader:
         self.full_mp4box_path = shutil.which(self.mp4box_path)
         self.full_ccextractor_path = shutil.which(self.ccextractor_path)
 
-        log = log.debug(
+        log.debug(
             "success",
             full_nm3u8dlre_path=self.full_nm3u8dlre_path,
             full_mp4decrypt_path=self.full_mp4decrypt_path,
@@ -409,7 +409,7 @@ class AppleMusicBaseDownloader:
         if self.download_mode == DownloadMode.YTDLP:
             await self._download_ytdlp_async(stream_url, download_path)
 
-        if self.download_mode == DownloadMode.NM3U8DLRE:
+        elif self.download_mode == DownloadMode.NM3U8DLRE:
             await self._download_nm3u8dlre(stream_url, download_path)
 
         log.debug("success")

@@ -518,7 +518,10 @@ class AppleMusicSongInterface:
             if self.use_album_date and album_id_for_date and not date:
                 date = await self.base.get_media_date(str(album_id_for_date))
             else:
-                release_date_str = attr.get("releaseDate")
+                release_date_str = (
+                    lk_song.get("releaseDate")
+                    or attr.get("releaseDate")
+                )
                 date = self.base.parse_date(release_date_str) if release_date_str else None
 
         composer    = attr.get("composerName")
